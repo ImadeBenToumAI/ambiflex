@@ -1,0 +1,41 @@
+{
+  "name": "ambiflex",
+  "version": "0.3.0",
+  "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
+  "author": {
+    "name": "ImadeBenToumAI"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "wakeWord": {
+      "type": "string",
+      "description": "Word that, at the start of any prompt (typed or dictated), applies the Ambiflex method: '<word> <task>', '<word> auto', '<word> stop', '<word> status'. Empty disables it.",
+      "default": "ambiflex",
+      "title": "Wake word"
+    },
+    "budgetUsd": {
+      "type": "number",
+      "description": "Spending cap in USD for a plan run in auto mode (0 = none). Auto mode stops when it is reached.",
+      "default": 0,
+      "title": "Budget (USD)"
+    },
+    "alertPct": {
+      "type": "number",
+      "description": "Percent of the budget at which a warning is shown.",
+      "default": 80,
+      "title": "Budget alert (%)"
+    },
+    "rateLimitAlertPct": {
+      "type": "number",
+      "description": "Percent of a usage window (5-hour, 7-day) at which a warning is shown.",
+      "default": 80,
+      "title": "Usage window alert (%)"
+    },
+    "hourlyRateUsd": {
+      "type": "number",
+      "description": "Your own $/hour figure for cost projections (0 = measure it from this session, assumed before the first minutes).",
+      "default": 0,
+      "title": "Hourly rate (USD)"
+    }
+  }
+}

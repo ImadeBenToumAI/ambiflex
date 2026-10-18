@@ -1,0 +1,12 @@
+{
+  "name": "ambiflex",
+  "owner": { "name": "ImadeBenToumAI" },
+  "description": "Ambiflex: an ambitious reasoning tree for Claude Code, live, steerable and autonomous.",
+  "plugins": [
+    {
+      "name": "ambiflex",
+      "source": "./",
+      "description": "Ambitious reasoning tree (Altitude / Depth / Range), live and steerable, with auto mode, tree search, ETA and cost."
+    }
+  ]
+}
