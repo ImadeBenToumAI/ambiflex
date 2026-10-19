@@ -37,16 +37,16 @@ Cost figures come from Claude Code's own ledger (`$.session.usage().cost.usd`) a
 In a Claude Code terminal session:
 
 ```
-/plugin install ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI
+/plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex
 ```
 
 From a shell:
 
 ```
-claude plugin install ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI
+claude plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex
 ```
 
-In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** `ImadeBenToumAI/ImadeBenToumAI` → **Add plugin** `ambiflex`.
+In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** `ImadeBenToumAI/ambiflex` → **Add plugin** `ambiflex`.
 
 In this repository, `.claude/settings.json` enables the plugin for every session (cloud or local) opened on the repository.
 
