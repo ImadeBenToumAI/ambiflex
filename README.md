@@ -64,3 +64,7 @@ In this repository, `.claude/settings.json` enables the plugin for every session
 claude plugin validate plugins/ambiflex
 cd plugins/ambiflex && claude plugin test .
 ```
+
+## Adoption numbers
+
+Stars, forks, issues and pull requests are public. Clones and views are read daily by the *Traffic snapshot* workflow into `docs/traffic.json` (GitHub itself keeps them 14 days). The workflow needs a repository secret `TRAFFIC_TOKEN`: a fine-grained personal access token limited to this repository with *Administration: read-only*.
