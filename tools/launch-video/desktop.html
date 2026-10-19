@@ -1,0 +1,399 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><style>html{color-scheme:light}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>Ambiflex</title>
+<script>document.documentElement.setAttribute("data-theme","dark")</script>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout : un tableau de bord tactile ; graphe plein écran, fiche du nœud en volet bas. */
+:root {
+  --bg: #f6f7fb; --panel: #ffffff; --fg: #141a2b; --muted: #5d667d; --line: #dfe3ee;
+  --accent: #2f5bea; --accent-ink: #ffffff;
+  --goal: #6d4ad6; --altitude: #0a8fc7; --depth: #1a9a5c; --range: #d9820b; --step: #6b7489;
+  --ok: #1a9a5c; --warn: #d9820b; --danger: #d03a3a;
+  --display: 'Sora', system-ui, sans-serif; --body: 'IBM Plex Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1320; --panel: #171c2c; --fg: #e9ecf5; --muted: #9aa3ba; --line: #2a3147;
+  --accent: #6f8dff; --accent-ink: #0f1320;
+  --goal: #a48cf0; --altitude: #4cb8e6; --depth: #46c585; --range: #f0a640; --step: #8c96ad;
+  --ok: #46c585; --warn: #f0a640; --danger: #ef6b6b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1320; --panel: #171c2c; --fg: #e9ecf5; --muted: #9aa3ba; --line: #2a3147;
+  --accent: #6f8dff; --accent-ink: #0f1320;
+  --goal: #a48cf0; --altitude: #4cb8e6; --depth: #46c585; --range: #f0a640; --step: #8c96ad;
+  --ok: #46c585; --warn: #f0a640; --danger: #ef6b6b; color-scheme: dark }
+
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); display: flex; flex-direction: column; overflow: hidden; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { background: var(--panel); border-bottom: 1px solid var(--line); padding-block: 10px 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 8px; }
+h1 { font: 700 1.05rem/1.25 var(--display); margin: 0; text-wrap: balance; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.meta b { color: var(--fg); font-weight: 600; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+.live { display: inline-flex; align-items: center; gap: 6px; }
+.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.live.on::before { background: var(--ok); }
+
+nav { display: flex; gap: 4px; background: var(--panel); border-bottom: 1px solid var(--line);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+nav button { padding: 10px 12px; font-weight: 600; font-size: .85rem; color: var(--muted); border-bottom: 2px solid transparent; }
+nav button[aria-selected="true"] { color: var(--fg); border-color: var(--accent); }
+
+main { flex: 1; min-height: 0; position: relative; }
+.view { position: absolute; inset: 0; }
+#graph { touch-action: none; width: 100%; height: 100%; display: block; }
+#graph text { font-family: var(--body); }
+#graph .node rect { stroke-width: 1.5; }
+#graph .node.sel rect { stroke-width: 3.5; }
+#graph .node.cur rect { stroke-width: 2.5; }
+#graph .node.proposed rect, #graph .edge.proposed { stroke-dasharray: 5 4; }
+#graph .node.abandoned { opacity: .35; }
+#graph .node.merged { opacity: .6; }
+#graph .edge { fill: none; stroke: var(--muted); stroke-width: 1.6; opacity: .7; }
+.hint { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 12px; font-size: .75rem; color: var(--muted); background: var(--panel); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.empty { padding: 32px max(16px, env(safe-area-inset-left, 0px)); color: var(--muted); max-width: 36rem; line-height: 1.5; }
+.empty b { color: var(--fg); }
+
+#list, #git { overflow: auto; padding-block: 8px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.row { display: grid; grid-template-columns: 6px 1fr auto; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.row i { height: 100%; min-height: 28px; border-radius: 3px; }
+.row .t { font-weight: 600; font-size: .92rem; }
+.row .s { color: var(--muted); font-size: .78rem; }
+.pill { font-size: .72rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.review { color: var(--warn); border-color: var(--warn); }
+.pill.exploring { color: var(--altitude); border-color: var(--altitude); }
+.pill.validated, .pill.done, .pill.merged { color: var(--ok); border-color: var(--ok); }
+pre { font: .78rem/1.45 var(--mono); white-space: pre; overflow-x: auto; margin: 0; }
+
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 30px rgba(0,0,0,.12); max-height: 70%; overflow: auto; transform: translateY(105%); transition: transform .25s;
+  padding-block: 10px calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 10px; }
+.sheet.open { transform: none; }
+.sheet .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto; }
+.sheet h2 { font: 700 1rem/1.3 var(--display); margin: 0; display: flex; gap: 8px; align-items: center; }
+.sheet h2 .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.sheet .k { color: var(--muted); font-size: .8rem; }
+.sheet p { margin: 0; line-height: 1.5; font-size: .92rem; }
+.detail { display: none; border-left: 3px solid var(--line); padding-left: 10px; color: var(--fg); font-size: .88rem; white-space: pre-wrap; line-height: 1.5; }
+.detail.open { display: block; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); font-weight: 600; font-size: .85rem; background: var(--bg); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: .5; cursor: default; }
+select { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.toast { position: absolute; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: .85rem; max-width: 90%; text-align: center; }
+.pending { background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; font-size: .82rem; display: grid; gap: 6px; }
+.pending code { font-family: var(--mono); font-size: .78rem; user-select: all; }
+@media (prefers-reduced-motion: reduce) { .sheet, .bar i { transition: none; } }
+
+#cap { position: fixed; left: 50%; transform: translateX(-50%); bottom: 36px; z-index: 50; max-width: 70%; background: rgba(0,0,0,.72); color: #fff; font: 500 22px/1.35 'IBM Plex Sans', system-ui, sans-serif; padding: 10px 18px; border-radius: 8px; text-align: center; text-wrap: balance; display: none; letter-spacing: .01em; }
+#cap.left { left: 32px; transform: none; max-width: 760px; text-align: left; }
+.toast.left { left: 32px; transform: none; bottom: 110px; font-size: 1rem; }
+#world { transition: transform .9s cubic-bezier(.2,.7,.2,1); }
+.sheet { max-width: 720px; left: auto; right: 24px; bottom: 24px; border-radius: 16px; border: 1px solid var(--line); max-height: 80%; }
+.sheet .k, .sheet p { font-size: 1rem; }
+#hl { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+#title-card { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 18px; z-index: 60; }
+#title-card.on { display: flex; }
+#title-card h1 { font: 700 72px/1 'Sora', system-ui, sans-serif; margin: 0; letter-spacing: -.02em; }
+#title-card p { font: 400 24px/1.4 'IBM Plex Sans', system-ui, sans-serif; color: var(--muted); margin: 0; }
+#title-card code { font: 500 22px 'IBM Plex Mono', monospace; background: var(--panel); border: 1px solid var(--line); padding: 10px 16px; border-radius: 8px; }
+#cap.on { display: block; }
+.btn.pressed { background: var(--accent); color: var(--accent-ink); transform: scale(.97); }
+.sheet { max-height: 62%; }
+.hint { display: none !important; }
+</style>
+
+<header>
+  <h1 id="goal">Ambiflex</h1>
+  <div class="meta">
+    <span><b id="pct">0 %</b> <span id="count">0/0</span></span>
+    <span>exploring <b id="exploring">0</b></span>
+    <span>ETA <b id="eta">—</b></span>
+    <span id="auto" hidden style="color:var(--warn);font-weight:600">AUTO</span>
+    <span id="here"></span>
+    <span id="cost"></span>
+    <span class="live" id="live">offline</span>
+  </div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="actions"><button class="btn primary" id="run-auto">Run on auto</button><button class="btn" id="stop-auto" hidden>Stop auto</button></div>
+</header>
+<nav role="tablist">
+  <button role="tab" aria-selected="true" data-tab="tree" id="tab-tree">Tree</button>
+  <button role="tab" aria-selected="false" data-tab="list" id="tab-list">List</button>
+  <button role="tab" aria-selected="false" data-tab="git" id="tab-git">Git</button>
+</nav>
+<main>
+  <div id="cap"></div>
+  <div id="title-card"><h1>Ambiflex</h1><p>An ambitious reasoning tree for Claude Code. Open source.</p><code>/plugin install ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI</code></div>
+  <section class="view" id="view-tree">
+    <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="empty" id="empty" hidden><b>No tree yet.</b><br>Give Claude a task in Claude Code: it sets the goal and draws the Altitude, Depth and Range tracks here.</div>
+    <div class="hint" id="hint">Tap a node · drag to pan · pinch to zoom</div>
+  </section>
+  <section class="view" id="view-list" hidden><div id="list"></div></section>
+  <section class="view" id="view-git" hidden><div id="git"><pre id="gitpre">No Git data yet.</pre></div></section>
+  <div class="sheet" id="sheet" aria-live="polite">
+    <div class="grab"></div>
+    <h2><span class="dot" id="s-dot"></span><span id="s-title"></span></h2>
+    <div class="k" id="s-meta"></div>
+    <p id="s-summary"></p>
+    <div class="detail" id="s-detail"></div>
+    <div class="actions" id="s-actions"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="k">Merge into</span>
+      <select id="s-merge"><option value="">choose…</option></select>
+      <button class="btn" id="s-merge-go">Merge</button>
+    </div>
+    <div class="pending" id="pending" hidden></div>
+    <button class="btn" id="s-close">Close</button>
+  </div>
+</main>
+
+<script>
+const __TREE = {"version": 1, "goal": "Make Ambiflex the reference Claude Code plugin for steering agents: noticed, used, and improved by others", "nodes": [{"title": "v0.1 shipped", "lens": "goal", "status": "done", "summary": "Panel, SVG graph, actions, tools, Git tab. 9 tests passing.", "id": "n1", "parents": [], "verification": "migrated from snapshot (unverified)", "createdAt": "2026-10-18T21:13:54.189Z", "updatedAt": "2026-10-18T23:10:36.728Z", "finishedAt": "2026-10-18T21:13:54.189Z"}, {"title": "Fix v0.1", "lens": "depth", "parents": ["n1"], "summary": "Fixed in v0.2: prompt injection via tree.json, done without proof, homonymous agents, prompt cache, panel at every session, tests.", "estimate": "1d", "id": "n2", "status": "done", "verification": "claude plugin validate + 17 tests green (v0.2)", "startedAt": "2026-10-18T21:30:00.000Z", "finishedAt": "2026-10-18T21:44:32.001088Z", "createdAt": "2026-10-18T21:13:55.539Z", "updatedAt": "2026-10-18T23:10:37.397Z"}, {"title": "Verifiable nodes", "lens": "depth", "parents": ["n2"], "summary": "Done in v0.2: \"done\" requires a verification, otherwise the node stays at \"needs review\".", "estimate": "1d", "id": "n3", "status": "done", "verification": "claude plugin validate + 17 tests green (v0.2)", "startedAt": "2026-10-18T21:30:00.000Z", "finishedAt": "2026-10-18T21:44:32.001088Z", "createdAt": "2026-10-18T21:13:56.986Z", "updatedAt": "2026-10-18T23:10:37.948Z"}, {"title": "Event log", "lens": "altitude", "parents": ["n2"], "summary": "Replace the whole-file tree.json with an append-only .ambiflex/log.jsonl that Git merges without conflicts (merge=union); the tree is replayed from it; tree.json stays as a derived snapshot.", "estimate": "2d", "id": "n4", "status": "done", "branch": "claude/ambiflex-auto-run", "startedAt": "2026-10-18T21:56:59.354Z", "createdAt": "2026-10-18T21:13:58.485Z", "updatedAt": "2026-10-18T21:59:40.417Z", "detail": "## Event log (Phase 2)\n\n- `.ambiflex/log.jsonl`: one JSON line per change (`goal`, `upsert`, `merge`, `auto`), append-only, with the session id and a timestamp. `.ambiflex/.gitattributes` sets `merge=union` so two sessions' logs merge without conflicts.\n- `replay(events)` rebuilds the tree in time order. When two sessions created the same id offline, the later one is renamed (`n7-b`) and that session's later references follow.\n- `tree.json` stays as a derived snapshot (readable, synced to the mobile page). Cost is only in the snapshot.\n- Migration: a session that finds a `tree.json` but no log converts it once (`eventsFromSnapshot`).\n\nJudge: `claude plugin test` 25/25, migration script round trip `true`.", "verification": "claude plugin test: 25 pass (replay equals state, union of two divergent logs recovers both subtrees with renamed collisions, snapshot migration round-trips); real tree.json migrated to log.jsonl with an exact round trip", "finishedAt": "2026-10-18T21:59:40.417Z"}, {"title": "Calibrated estimates", "lens": "altitude", "parents": ["n4"], "summary": "Three-point estimates (o/p/pess), critical path (done), arrival date in the header, calibration factor applied to new estimates (measured; the \u00d70.03 artefact from hand-set timestamps must be excluded).", "estimate": "2d", "id": "n5", "status": "done", "createdAt": "2026-10-18T21:13:59.938Z", "updatedAt": "2026-10-18T22:04:40.939Z", "detail": "## Calibrated estimates (Phase 3)\n\n- Three-point estimates `1h/2h/4h` (optimistic / likely / pessimistic): expected value (o + 4p + pess) / 6, spread (pess \u2212 o) / 6. Single values still work.\n- Calibration = median of actual / estimated over finished nodes, counting only real measurements: \u2265 2 min of work on an estimate \u2265 30 min, ratio within [0.05, 20]. The \u00d70.03 artefact from hand-set timestamps is now excluded.\n- Expected end: the calibrated critical path turned into a calendar date (8h days, Monday to Friday; around the clock in auto mode), with \u00b1 from the three-point spread. Shown in the panel, in `tree_get` and when auto mode starts.\n- The method tells Claude to multiply new estimates by the reported calibration factor.\n\nJudge: `claude plugin test` 28/28.", "verification": "claude plugin test: 28 pass (PERT value and spread of \"1h/2h/4h\", calibration rejects hand-set timestamps and keeps a 3h-on-2h measurement at \u00d71.5, arrival skips nights and weekends unless continuous)", "finishedAt": "2026-10-18T22:04:40.939Z"}, {"title": "Nodes \u2194 branches \u2194 PR", "lens": "range", "parents": ["n4"], "summary": "One track = one branch or worktree; a node shows its commits and PR; \"Validate\" on a node with a PR proposes the merge (never merges alone).", "estimate": "2d", "id": "n6", "status": "done", "createdAt": "2026-10-18T21:14:01.387Z", "updatedAt": "2026-10-18T22:06:34.744Z", "detail": "## Nodes \u2194 branches \u2194 PR (Phase 4)\n\n- An agent spawned with `#<id>` gets that node its own branch `ambiflex/<id>-<slug>` in a worktree under `.ambiflex/worktrees/<id>` (git-ignored); the agent is told to work and commit there, never on the main checkout.\n- The panel shows, per node with a branch, its commits beyond `main` and its PR when `gh` can report one; the Git tab refreshes them after every git command.\n- \"Validate\" on a node with a branch asks Claude to propose the merge of that branch (or its PR) and never to merge without explicit confirmation.\n\nJudge: `claude plugin test` 29/29 and a real-repo run of the worktree commands.", "verification": "claude plugin test: 29 pass (an agent spawned for #n1 gets `git worktree add .ambiflex/worktrees/n1 -b ambiflex/n1-perf-track`, its prompt names the worktree, the node records the branch and the panel shows it); the same git commands verified on a real temporary repository (worktree, commit, `git log main..branch` lists it)", "finishedAt": "2026-10-18T22:06:34.744Z"}, {"title": "Tree search", "lens": "range", "parents": ["n3"], "summary": "tree_explore spawns one agent per track in its own branch; scores land from their reports; tree_prune keeps the best. Proven on demo/parse.js: three explorers, winner merged at 7.4\u00d7.", "estimate": "3d", "id": "n7", "status": "done", "createdAt": "2026-10-18T21:14:02.883Z", "updatedAt": "2026-10-18T23:15:37.784Z", "startedAt": "2026-10-18T22:10:54.432Z", "detail": "## Tree search (Phase 5)\n\n- `tree_explore <parent>`: one subagent per proposed child track, in parallel, each in its own worktree branch, with the budget (agents \u00d7 minutes) echoed before launch. Each agent is told to end with `NODE:` / `RESULT:` / `SCORE:` measured by the track's declared judge.\n- Scores land on the nodes as the agents finish (matched by agent id, or by the NODE line on hosts that do not name agents); the nodes move to *needs review*.\n- `tree_prune <parent>`: keeps the best-scored track, abandons the others with the reason. The panel ranks the tracks and offers *Prune weak* and *Merge best*.\n- Real run: demo/parse.js, baseline 334 ms. Shaped rows (7\u00d7) beat single pass (4-7\u00d7) and no-spread (3\u00d7). Merged: 44 ms on main.\n\nJudge: the independent benchmark on the merged code, and 31 tests.", "verification": "End-to-end run on a real problem: tree_explore spawned 3 agents in their own worktree branches, each reported NODE/RESULT/SCORE through its judge, scores landed on the nodes automatically, tree_prune kept the best, the winner merged into the main branch benches at 7.38\u00d7 (independent measurement); plus 31 unit tests", "finishedAt": "2026-10-18T22:13:00.239Z"}, {"title": "Publish and submit", "lens": "step", "parents": ["n5", "n6", "n7"], "summary": "Published from the profile repository (marketplace \"imade\"); user-scope install verified from an empty environment. Submission notes in docs/ambiflex-submission.md. The dedicated repository is deferred to launch day (user's choice: needs a repo created by hand).", "estimate": "1d", "id": "n8", "status": "done", "createdAt": "2026-10-18T21:14:04.181Z", "updatedAt": "2026-10-18T22:31:59.807Z", "startedAt": "2026-10-18T22:26:18.659Z", "verification": "Fresh-HOME install from the README command: `claude plugin marketplace add ImadeBenToumAI/ImadeBenToumAI` then `claude plugin install ambiflex@imade` succeeds; `claude plugin list` shows ambiflex@imade at user scope", "finishedAt": "2026-10-18T22:31:59.807Z"}, {"title": "Adoption strategy", "lens": "goal", "status": "review", "parents": ["n1"], "summary": "Umbrella for n10-n15. Everything Claude could do alone is done; the open children wait on the user (video, articles, posting, launch-day repo). End-to-end report in docs/auto-run-report.md.", "id": "n9", "createdAt": "2026-10-18T21:20:05.843Z", "updatedAt": "2026-10-18T23:01:40.241Z", "startedAt": "2026-10-18T21:20:05.843Z"}, {"title": "Proof before promo", "lens": "altitude", "parents": ["n9", "n5"], "summary": "The measured demo exists (3 agents, 334 \u2192 44 ms, independent benchmark). The 60-second video script is in docs/launch-kit.md, shot by shot; the recording is the user's.", "estimate": "2w", "id": "n10", "status": "review", "createdAt": "2026-10-18T21:20:08.591Z", "updatedAt": "2026-10-18T22:41:04.342Z"}, {"title": "Content over plugin", "lens": "depth", "parents": ["n9"], "summary": "Four article drafts written from the session's real data (docs/articles/01-04): done-means-nothing, estimates \u00d70.01, three agents like a chess engine, plugin API field notes. Waiting on the user's edits and signature; publishing is theirs.", "estimate": "4w", "id": "n11", "status": "review", "createdAt": "2026-10-18T21:20:11.140Z", "updatedAt": "2026-10-18T22:33:23.610Z", "startedAt": "2026-10-18T22:26:18.644Z"}, {"title": "Distribution", "lens": "range", "parents": ["n9"], "summary": "All texts drafted in docs/launch-kit.md: reply to Felix (with thread), Show HN title and first comment, awesome-list line, Discord/Reddit post, French post, launch-day order. Posting is the user's.", "estimate": "2w", "id": "n12", "status": "review", "createdAt": "2026-10-18T21:20:13.737Z", "updatedAt": "2026-10-18T22:41:06.079Z"}, {"title": "Retention loop", "lens": "depth", "parents": ["n10", "n4"], "summary": "Buzz brings installs; usage comes from history and calibration. Both shipped in v0.3.", "estimate": "3w", "id": "n13", "status": "done", "createdAt": "2026-10-18T21:20:17.249Z", "updatedAt": "2026-10-18T22:41:08.596Z", "verification": "Phases 2 and 3 shipped in v0.3 (event log, calibration from real timings, expected end date): the plugin gets more useful with every project, which is what this node asked for; measured by the calibration line in tree_get", "finishedAt": "2026-10-18T22:41:08.596Z"}, {"title": "Measure adoption", "lens": "depth", "parents": ["n12"], "summary": "Weekly node update after launch: stars, installs, issues by others, external PRs, Anthropic mentions. Targets at 90 days: 500 / \u2014 / 20 / 10 / 1 (docs/launch-kit.md \u00a78). Starts on launch day.", "estimate": "1w", "id": "n14", "status": "proposed", "createdAt": "2026-10-18T21:20:19.877Z", "updatedAt": "2026-10-18T22:41:23.528Z"}, {"title": "Launch day", "lens": "step", "parents": ["n10", "n11", "n12"], "summary": "Same-morning order in docs/launch-kit.md \u00a77: dedicated repo, article 1, reply to Felix with the video, Show HN, awesome lists, communities. Waits on the user: video recorded, articles signed, repo created.", "estimate": "1d", "id": "n15", "status": "proposed", "createdAt": "2026-10-18T21:20:22.882Z", "updatedAt": "2026-10-18T22:41:23.543Z"}, {"title": "Demo: CSV parse", "lens": "step", "parents": ["n7", "n19"], "summary": "Three explorers in parallel on demo/parse.js: no object spread (3\u00d7), single pass (4-7\u00d7), shaped rows (7\u00d7). Pruned to the shaped-rows track and merged it: 334 ms \u2192 44 ms on the main checkout.", "estimate": "1h/2h/4h", "judge": "BASELINE_MS=334 node demo/bench.js <impl> \u2192 SCORE = speedup; wrong output scores 0", "id": "n16", "status": "done", "createdAt": "2026-10-18T22:10:54.450Z", "updatedAt": "2026-10-18T22:12:53.443Z", "verification": "Independent run of demo/bench.js on the main checkout after merging the winner: 334 ms \u2192 44 ms, SCORE 7.38 (agents reported 3.15 / 6.66 / 7.3; my own runs 2.95 / 4.41 / 7.24, same ranking); correctness gate passes", "branch": "ambiflex/n19-track-shaped-rows", "finishedAt": "2026-10-18T22:12:53.443Z"}, {"title": "Track: no object spread", "lens": "step", "parents": ["n16"], "summary": "Replacing per-cell object spread with direct assignment (plus hoisted header trimming) cuts parse time from ~334 ms to ~105 ms while keeping split-based parsing. Pruned: scored 3.15 against 7.3 for n19.", "estimate": "20min/30min/1h", "judge": "BASELINE_MS=334 node demo/bench.js demo/parse.js (run from the worktree)", "id": "n17", "status": "abandoned", "createdAt": "2026-10-18T22:10:58.177Z", "updatedAt": "2026-10-18T22:12:43.776Z", "branch": "ambiflex/n17-track-no-object-spread", "agent": "", "startedAt": "2026-10-18T22:11:14.689Z", "score": 3.15}, {"title": "Track: single pass", "lens": "step", "parents": ["n16"], "summary": "Single-pass indexOf parser passes the correctness gate and runs ~5-6x faster than the 334 ms baseline (best 50.1 ms). Pruned: scored 6.66 against 7.3 for n19.", "estimate": "30min/1h/2h", "judge": "BASELINE_MS=334 node demo/bench.js demo/parse.js (run from the worktree)", "id": "n18", "status": "abandoned", "createdAt": "2026-10-18T22:11:00.356Z", "updatedAt": "2026-10-18T22:12:43.768Z", "branch": "ambiflex/n18-track-single-pass", "agent": "", "startedAt": "2026-10-18T22:11:14.857Z", "score": 6.66}, {"title": "Track: shaped rows", "lens": "step", "parents": ["n16"], "summary": "Header-built row factory with a single hidden class plus lazy trim cuts the parse from ~334ms to ~42ms, about 7\u20138x faster than baseline.", "estimate": "30min/1h/2h", "judge": "BASELINE_MS=334 node demo/bench.js demo/parse.js (run from the worktree)", "id": "n19", "status": "merged", "createdAt": "2026-10-18T22:11:02.537Z", "updatedAt": "2026-10-18T22:12:49.747Z", "branch": "ambiflex/n19-track-shaped-rows", "agent": "", "startedAt": "2026-10-18T22:11:14.999Z", "score": 7.3, "finishedAt": "2026-10-18T22:12:49.747Z"}], "auto": {"on": false, "turns": 20, "maxTurns": 40, "startedAt": "2026-10-18T21:55:08.518Z"}, "cost": {"spentUsd": 59.77, "sessionUsd": 59.77, "ratePerHour": 30, "assumedRate": true, "estimateUsd": 331.2, "model": "claude-fable-5-1", "rateLimits": [{"kind": "five_hour", "percentUsed": 2, "resetsAt": "2026-10-19T01:20:00.000Z"}, {"kind": "seven_day", "percentUsed": 16, "resetsAt": "2026-10-22T21:00:00.000Z"}]}};
+(() => {
+  const LENS = { goal: 'Goal', altitude: 'Altitude', depth: 'Depth', range: 'Range', step: 'Step' };
+  const STATUS = { proposed: 'proposed', exploring: 'exploring', review: 'needs review', done: 'done', validated: 'validated', merged: 'merged', abandoned: 'abandoned' };
+  const $ = id => document.getElementById(id);
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue('--' + v).trim();
+
+  let tree = { goal: '', nodes: [], auto: { on: false, turns: 0, maxTurns: 40 }, cost: null };
+  let selected = null;
+  let comments = null, db = null, canSend = 'off';
+  const view = { x: 0, y: 0, k: 1 }; window.__view = view;
+
+  // ---------- données ----------
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const minutes = est => {
+    if (!est) return 0;
+    const m = String(est).match(/([\d.,]+)\s*(min|m|h|j|d|sem|w)\b/i);
+    if (!m) return 0;
+    const n = parseFloat(m[1].replace(',', '.'));
+    return n * ({ min: 1, m: 1, h: 60, j: 480, d: 480, sem: 2400, w: 2400 }[m[2].toLowerCase()] || 0);
+  };
+  const human = min => min <= 0 ? '—' : min < 60 ? `${Math.round(min)}min` : min < 480 ? `${+(min / 60).toFixed(1)}h` : min < 2400 ? `${+(min / 480).toFixed(1)}d` : `${+(min / 2400).toFixed(1)}w`;
+  const finished = n => ['done', 'validated', 'merged'].includes(n.status);
+  const depths = () => {
+    const byId = new Map(tree.nodes.map(n => [n.id, n])); const memo = new Map();
+    const visit = (id, seen) => {
+      if (memo.has(id)) return memo.get(id);
+      const n = byId.get(id); if (!n || seen.has(id)) return 0; seen.add(id);
+      const ps = (n.parents || []).filter(p => byId.has(p));
+      const d = ps.length ? 1 + Math.max(...ps.map(p => visit(p, seen))) : 0; memo.set(id, d); return d;
+    };
+    tree.nodes.forEach(n => visit(n.id, new Set())); return memo;
+  };
+  // Critical path: longest chain of remaining estimates, in minutes.
+  const criticalPath = () => {
+    const byId = new Map(tree.nodes.map(n => [n.id, n])); const memo = new Map();
+    const open = n => !finished(n) && n.status !== 'abandoned';
+    const visit = (id, seen) => { if (memo.has(id)) return memo.get(id); const n = byId.get(id); if (!n || seen.has(id)) return 0; seen.add(id);
+      const best = Math.max(0, ...(n.parents || []).map(p => visit(p, seen))); const v = best + (open(n) ? minutes(n.estimate) : 0); memo.set(id, v); return v; };
+    return Math.max(0, ...tree.nodes.map(n => visit(n.id, new Set())));
+  };
+  const current = () => {
+    const s = [...tree.nodes].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    return s.find(n => n.status === 'review') || s.find(n => n.status === 'exploring') || s.find(n => n.status === 'proposed');
+  };
+
+  // ---------- en-tête ----------
+  function renderHeader() {
+    const live = tree.nodes.filter(n => n.status !== 'abandoned');
+    const done = live.filter(finished).length;
+    const pct = live.length ? Math.round(done / live.length * 100) : 0;
+    $('goal').textContent = tree.goal || 'Ambiflex';
+    $('auto').hidden = !tree.auto?.on; $('run-auto').hidden = !!tree.auto?.on; $('stop-auto').hidden = !tree.auto?.on; if (tree.auto?.on) $('auto').textContent = `AUTO ${tree.auto.turns}/${tree.auto.maxTurns}`;
+    $('pct').textContent = pct + ' %'; $('count').textContent = `${done}/${live.length}`;
+    $('bar').style.width = pct + '%';
+    $('exploring').textContent = live.filter(n => n.status === 'exploring').length;
+    $('eta').textContent = human(criticalPath());
+    const c = tree.cost; $('cost').innerHTML = c ? `spent <b>$${(+c.spentUsd || 0).toFixed(2)}</b> · est. <b>$${(+c.estimateUsd || 0).toFixed(2)}</b> to finish${c.assumedRate ? ' (assumed rate)' : ''}${(c.rateLimits || []).map(r => ` · ${esc(r.kind)} ${r.percentUsed}%`).join('')}` : '';
+    const cur = current();
+    $('here').innerHTML = cur ? `you are here: <b>${esc(cur.id)} ${esc(cur.title)}</b>` : '';
+    $('empty').hidden = tree.nodes.length > 0; $('hint').hidden = tree.nodes.length === 0;
+  }
+
+  // ---------- graphe ----------
+  const W = 150, H = 48, GX = 18, GY = 40;
+  // Top-down like a Git graph: rows = depth, children below their parents, ordered by the barycentre of their parents.
+  function layout() {
+    const d = depths(); const rows = new Map();
+    tree.nodes.forEach(n => { const r = d.get(n.id) || 0; rows.set(r, [...(rows.get(r) || []), n]); });
+    const pos = new Map();
+    [...rows.keys()].sort((a, b) => a - b).forEach(r => {
+      const list = rows.get(r);
+      const bary = n => { const ps = (n.parents || []).map(p => pos.get(p)).filter(Boolean); return ps.length ? ps.reduce((s, p) => s + p.x, 0) / ps.length : 0; };
+      if (r > 0) list.sort((a, b) => bary(a) - bary(b));
+      list.forEach((n, c) => pos.set(n.id, { x: c * (W + GX), y: r * (H + GY) }));
+    });
+    return pos;
+  }
+  function renderGraph() {
+    const svg = $('graph'); const pos = layout();
+    const sel = selected, cur = current()?.id;
+    let edges = '', nodes = '';
+    for (const n of tree.nodes) for (const p of (n.parents || [])) {
+      const a = pos.get(p), b = pos.get(n.id); if (!a || !b) continue;
+      const x1 = a.x + W / 2, y1 = a.y + H, x2 = b.x + W / 2, y2 = b.y, my = (y1 + y2) / 2;
+      edges += `<path class="edge ${n.status}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+    }
+    for (const n of tree.nodes) {
+      const p = pos.get(n.id); const color = css(n.lens) || css('step');
+      const badge = n.status === 'validated' ? '✓ ' : n.status === 'merged' ? '⤵ ' : n.status === 'review' ? '◆ ' : n.status === 'exploring' ? '● ' : '';
+      const meta = [n.id, STATUS[n.status] || n.status, n.estimate].filter(Boolean).join(' · ');
+      const fill = finished(n) ? color + '22' : css('panel');
+      nodes += `<g class="node ${n.status}${n.id === sel ? ' sel' : ''}${n.id === cur ? ' cur' : ''}" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})" tabindex="0" role="button">
+        <rect width="${W}" height="${H}" rx="10" fill="${fill}" stroke="${color}"/>
+        <rect width="${W}" height="5" rx="2.5" fill="${color}"/>
+        <text x="10" y="22" font-size="12" font-weight="600" fill="${css('fg')}">${esc(badge + cut(n.title, 20))}</text>
+        <text x="10" y="38" font-size="10" fill="${css('muted')}">${esc(cut(meta, 28))}</text>
+        ${n.agent ? `<circle cx="${W - 9}" cy="14" r="4" fill="${css('danger')}"><animate attributeName="opacity" values="1;.3;1" dur="1.4s" repeatCount="indefinite"/></circle>` : ''}
+      </g>`;
+    }
+    svg.innerHTML = `<g id="world" transform="translate(${view.x},${view.y}) scale(${view.k})">${edges}${nodes}</g>`;
+    svg.querySelectorAll('.node').forEach(g => {
+      g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(g.dataset.id); } });
+    });
+  }
+  const cut = (s, n) => (s = String(s ?? ''), s.length > n ? s.slice(0, n - 1) + '…' : s);
+  function fitView() {
+    const pos = layout(); if (!pos.size) return;
+    const xs = [...pos.values()].map(p => p.x), ys = [...pos.values()].map(p => p.y);
+    const w = Math.max(...xs) + W, h = Math.max(...ys) + H;
+    const box = $('graph').getBoundingClientRect();
+    view.k = Math.min(1.2, Math.max(.35, Math.min((box.width - 24) / w, (box.height - 60) / h)));
+    view.x = 12; view.y = 12;
+  }
+  // pan & pinch
+  (() => {
+    const svg = $('graph'); const pts = new Map(); let last = null;
+    let down = null;
+    svg.addEventListener('pointerdown', e => { svg.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); last = null; down = { x: e.clientX, y: e.clientY, target: e.target.closest('.node') }; });
+    svg.addEventListener('pointermove', e => {
+      if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const list = [...pts.values()];
+      if (list.length === 1) { if (last) { view.x += e.clientX - last.x; view.y += e.clientY - last.y; apply(); } last = { x: e.clientX, y: e.clientY }; }
+      else if (list.length === 2) {
+        const d = Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+        if (last && last.d) { const f = d / last.d; const cx = (list[0].x + list[1].x) / 2, cy = (list[0].y + list[1].y) / 2; const r = svg.getBoundingClientRect();
+          view.x = cx - r.left - (cx - r.left - view.x) * f; view.y = cy - r.top - (cy - r.top - view.y) * f; view.k = Math.min(3, Math.max(.2, view.k * f)); apply(); }
+        last = { d };
+      }
+    });
+    const up = e => {
+      pts.delete(e.pointerId); last = null;
+      // A tap (no drag) on a node selects it; the pan handler holds the pointer, so the click never reaches the node.
+      if (down && down.target && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8 && pts.size === 0) select(down.target.dataset.id);
+      down = null;
+    };
+    svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
+    svg.addEventListener('wheel', e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : .9; const r = svg.getBoundingClientRect(); const cx = e.clientX - r.left, cy = e.clientY - r.top;
+      view.x = cx - (cx - view.x) * f; view.y = cy - (cy - view.y) * f; view.k = Math.min(3, Math.max(.2, view.k * f)); apply(); }, { passive: false });
+    function apply() { const w = $('world'); if (w) w.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); }
+    window.__apply = apply;
+    // Fit the whole graph (or a sub-box) into the graph area, leaving `right` px free (for the docked sheet).
+    window.__fit = (right = 0, pad = 24, box = null) => { const w = $('world'); const b = box || (() => { let x1=1e9,y1=1e9,x2=-1e9,y2=-1e9; w.querySelectorAll('.node').forEach(n => { const r = (n.querySelector('rect') || n).getBBox(); const m = n.transform.baseVal.consolidate(); const tx = m ? m.matrix.e : 0, ty = m ? m.matrix.f : 0; x1=Math.min(x1,r.x+tx); y1=Math.min(y1,r.y+ty); x2=Math.max(x2,r.x+r.width+tx); y2=Math.max(y2,r.y+r.height+ty) }); return { x:x1, y:y1, width:x2-x1, height:y2-y1 } })(); const r = svg.getBoundingClientRect();
+      const aw = window.innerWidth - right - 2 * pad, ah = r.height - 2 * pad; const k = Math.min(aw / b.width, ah / b.height);
+      view.k = k; view.x = pad + (aw - b.width * k) / 2 - b.x * k; view.y = pad + (ah - b.height * k) / 2 - b.y * k; apply(); return { k, x: view.x, y: view.y, b } };
+  })();
+
+  // ---------- liste & git ----------
+  function renderList() {
+    $('list').innerHTML = tree.nodes.map(n => `<button class="row" data-id="${esc(n.id)}">
+      <i style="background:${css(n.lens) || css('step')}"></i>
+      <span><div class="t">${esc(n.id)} ${esc(n.title)}</div><div class="s">${esc(LENS[n.lens] || n.lens)}${n.estimate ? ' · ' + esc(n.estimate) : ''}${n.parents?.length ? ' · from ' + esc(n.parents.join(', ')) : ''}</div></span>
+      <span class="pill ${esc(n.status)}">${esc(STATUS[n.status] || n.status)}</span></button>`).join('') || '<div class="empty">No nodes.</div>';
+    $('list').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { showTab('tree'); select(b.dataset.id); }));
+  }
+
+  // ---------- fiche & actions ----------
+  window.__select = (id) => select(id); function select(id) {
+    selected = selected === id ? null : id; renderGraph();
+    const n = tree.nodes.find(x => x.id === selected);
+    const sheet = $('sheet'); if (!n) { sheet.classList.remove('open'); return; }
+    $('s-dot').style.background = css(n.lens) || css('step');
+    $('s-title').textContent = `${n.id} · ${n.title}`;
+    $('s-meta').textContent = [LENS[n.lens], STATUS[n.status] || n.status, n.estimate && 'estimate ' + n.estimate, n.branch && 'branch ' + n.branch, n.parents?.length && 'from ' + n.parents.join(', '), n.agent && 'agent: ' + n.agent, n.verification && 'verified by ' + n.verification, typeof n.score === 'number' && 'score ' + n.score].filter(Boolean).join(' · ');
+    $('s-summary').textContent = n.summary || '';
+    const det = $('s-detail'); det.textContent = n.detail || ''; det.classList.remove('open');
+    const acts = [
+      n.detail && ['Show detail', () => det.classList.toggle('open'), ''],
+      ['Validate', () => send(n, `Validate ${n.id} "${n.title}": fold its results into the main branch of the tree (and of the code where relevant), then move on.`), 'primary'],
+      ['Deeper', () => send(n, `Go deeper on ${n.id} "${n.title}" (Depth): expert methods and tools, raw data, external judge. Create the sub-nodes.`), ''],
+      ['Wider', () => send(n, `Go wider on ${n.id} "${n.title}" (Range): which other disciplines would help? One track per useful discipline.`), ''],
+      ['Higher', () => send(n, `Go higher on ${n.id} "${n.title}" (Altitude): what is the goal behind this goal? Propose the durable version.`), ''],
+      ['Spawn agent', () => send(n, `Spawn a subagent to explore ${n.id} "${n.title}" (put #${n.id} in its description).`), ''],
+      ['Abandon', () => send(n, `Abandon track ${n.id} "${n.title}". Do not pursue it; note the reason.`), 'danger'],
+    ].filter(Boolean);
+    $('s-actions').innerHTML = acts.map(([l, , c], i) => `<button class="btn ${c}" data-i="${i}">${l}</button>`).join('');
+    $('s-actions').querySelectorAll('button').forEach(b => b.addEventListener('click', acts[+b.dataset.i][1]));
+    const others = tree.nodes.filter(o => o.id !== n.id && o.status !== 'abandoned');
+    $('s-merge').innerHTML = '<option value="">choose…</option>' + others.map(o => `<option value="${esc(o.id)}">${esc(o.id)} ${esc(o.title)}</option>`).join('');
+    $('s-merge-go').onclick = () => { const into = $('s-merge').value; const o = others.find(x => x.id === into); if (o) send(n, `Merge ${n.id} "${n.title}" into ${o.id} "${o.title}" and combine their results.`); };
+    $('pending').hidden = true;
+    sheet.classList.add('open');
+  }
+  $('run-auto').addEventListener('click', () => sendPlain('Auto mode: run the plan without asking for approval (tree_auto on). Tell me the end-to-end ETA, then start.'));
+  $('stop-auto').addEventListener('click', () => sendPlain('Stop auto mode (tree_auto off) and report where you are.'));
+  async function sendPlain(text) { const n = current() || tree.nodes[0]; if (!n) return toast('No tree yet.'); await send(n, text); }
+  $('s-close').addEventListener('click', () => { selected = null; $('sheet').classList.remove('open'); renderGraph(); });
+
+  let lastSend = 0;
+  async function send(n, text) {
+    const full = `[tree] ${text}`;
+    const el = document.querySelector(`.node[data-id="${CSS.escape(n.id)}"]`) || $('s-title');
+    if (comments && canSend === 'available' && Date.now() - lastSend > 3000) {
+      try {
+        const anchor = await comments.anchorFor(el);
+        await comments.sendToClaude({ anchor, text: full }); lastSend = Date.now();
+        toast('Sent to Claude. The reply lands in the conversation and the tree updates here.');
+        if (db) db.collection('actions').add({ node: n.id, text: full, at: new Date().toISOString(), via: 'comment' }).catch(() => {});
+        return;
+      } catch (e) { /* on retombe sur la file d'attente */ }
+    }
+    try { if (db) await db.collection('actions').add({ node: n.id, text: full, at: new Date().toISOString(), via: 'queue' }); } catch (e) {}
+    const p = $('pending'); p.hidden = false;
+    p.innerHTML = `<div>Claude cannot be reached from here right now. The action is queued; paste it into Claude Code:</div><code>${esc(full)}</code><div><button class="btn" id="copy">Copy</button></div>`;
+    $('copy').onclick = () => navigator.clipboard.writeText(full).then(() => toast('Copied.'), () => { const r = document.createRange(); r.selectNodeContents(p.querySelector('code')); getSelection().removeAllRanges(); getSelection().addRange(r); });
+  }
+  function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.querySelector('main').appendChild(t); setTimeout(() => t.remove(), 3500); }
+
+  // ---------- onglets ----------
+  function showTab(name) {
+    document.querySelectorAll('nav [role=tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    ['tree', 'list', 'git'].forEach(v => $('view-' + v).hidden = v !== name);
+    try { localStorage.setItem('tab', name); } catch (e) {}
+    if (name === 'tree') renderGraph();
+  }
+  document.querySelectorAll('nav [role=tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  if (location.hash === '#git' || location.hash === '#list') showTab(location.hash.slice(1));
+  else { try { const t = localStorage.getItem('tab'); if (t) showTab(t); } catch (e) {} }
+
+  // ---------- rendu ----------
+  function renderAll() { renderHeader(); renderGraph(); renderList(); }
+  function setTree(t) { tree = { goal: t?.goal || '', nodes: Array.isArray(t?.nodes) ? t.nodes : [], auto: t?.auto || { on: false, turns: 0, maxTurns: 40 }, cost: t?.cost || null }; fitView(); renderAll(); }
+  renderAll();
+  addEventListener('resize', () => { fitView(); renderGraph(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+
+  // ---------- capacités ----------
+  (async () => {
+    if (!window.claude) { setTree(__TREE); $('live').classList.add('on'); $('live').textContent = 'live'; return; }
+    db = await window.claude?.use('db').catch(() => null);
+    if (db) {
+      db.doc('tree/current').onSnapshot(s => { $('live').classList.add('on'); $('live').textContent = 'live'; setTree(s.data()); }, () => { $('live').textContent = 'cannot read'; });
+      db.doc('git/current').onSnapshot(s => { const d = s.data(); if (d?.text) $('gitpre').textContent = d.text; }, () => {});
+    }
+    comments = await window.claude?.use('comments').catch(() => null);
+    if (comments) { try { canSend = await comments.canSendToClaude(); } catch (e) { canSend = 'off'; } }
+  })();
+})();
+</script>
+</body></html>

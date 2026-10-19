@@ -1,0 +1,35 @@
+1
+00:00:06,800 --> 00:00:13,100
+A plan Claude Code executed on its own. Nineteen nodes. One evening.
+
+2
+00:00:14,200 --> 00:00:25,100
+Felix Rieseberg's method: altitude, depth, range.
+
+3
+00:00:26,200 --> 00:00:37,100
+A node is not done because the model says so. It needs a proof. Only I can validate.
+
+4
+00:00:38,200 --> 00:00:47,600
+Three agents, three branches, one benchmark.
+
+5
+00:00:48,800 --> 00:00:58,600
+Then I ran the benchmark myself. 334 ms down to 44.
+
+6
+00:00:59,800 --> 00:01:11,600
+Cost and time on screen before and during. Estimates calibrated against real timings.
+
+7
+00:01:12,800 --> 00:01:24,600
+After each turn, the plugin hands Claude the next open node.
+
+8
+00:01:25,800 --> 00:01:33,600
+And I steer from anywhere. Validate, go deeper, go wider, prune.
+
+9
+00:01:35,000 --> 00:01:42,500
+Ambiflex. Open source, one line to install.

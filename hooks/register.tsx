@@ -6,7 +6,7 @@ import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log
 import type { Event } from './log'
 import {
   LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, upsert,
+  merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, upsert,
 } from './tree'
 
 const PLUGIN = 'ambiflex'
@@ -22,6 +22,8 @@ const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
 const expanded = atom({ plugin: 'ambiflex', key: 'expanded' } as const, false)
 const tab = atom({ plugin: 'ambiflex', key: 'tab' } as const, 'tree' as Tab)
+// '' = the default for the tree's size, 'all' = every node, 'compact' = finished leaves folded.
+const view = atom({ plugin: 'ambiflex', key: 'view' } as const, '' as '' | 'all' | 'compact')
 const git = atom({ plugin: 'ambiflex', key: 'git' } as const, '')
 const agents = atom({ plugin: 'ambiflex', key: 'agents' } as const, [] as string[])
 const branches = atom({ plugin: 'ambiflex', key: 'branches' } as const, {} as Record<string, BranchInfo>)
@@ -330,9 +332,24 @@ async function drawTree($: $, e: ResolveInput) {
     </Box>
   )
 
-  const svg = renderSvg(t, sel)
+  const viewMode = await read($, view)
+  const compact = viewMode === 'compact' ? true : viewMode === 'all' ? false : compactByDefault(t)
+  const svg = renderSvg(t, sel, { compact })
+  // The picture is not clickable: nodes are selected from the list below it. The toggle keeps wide trees readable.
   const graph = ui.Svg && t.nodes.length > 0
-    ? <ui.Svg source={svg.source} alt={outline(t)} isInteractive />
+    ? (
+      <Box flexDirection="column">
+        <ui.Svg source={svg.source} alt={outline(t)} width={svg.width} />
+        {t.nodes.length > 8 && (
+          <Box flexDirection="row" gap={1}>
+            <Button key="view-toggle" onPress={() => update($, view, () => (compact ? 'all' : 'compact'))}>
+              {compact ? 'Show finished nodes' : 'Fold finished nodes'}
+            </Button>
+            <Text dimColor>Select a node from the list below.</Text>
+          </Box>
+        )}
+      </Box>
+    )
     : null
 
   const list = (

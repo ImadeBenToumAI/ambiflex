@@ -3,7 +3,7 @@
 Ambiflex turns Felix Rieseberg's **be-ambitious** method (Altitude, Depth, Range) into something you can **see and steer** while Claude Code works, and that can **run the plan on its own** once you have approved it.
 
 - **Reasoning graph.** A root goal (the goal behind the goal), **Altitude / Depth / Range** tracks, and steps. Branches can converge (merge), like Git branches.
-- **Live panel.** Top-down graph like a Git log (colour = track, dashed = proposed, ◆ = needs review, ✓ = validated, ⤵ = merged, red dot = agent running; branches descend and merge), progress in %, "you are here", **end-to-end ETA** on the critical path, an **expected end date** (8h days, or around the clock in auto mode, ± the spread of three-point estimates such as `1h/2h/4h`), and a calibration factor (actual / estimated, measured on real nodes only) that Claude applies to its next estimates.
+- **Live panel.** Top-down graph like a Git log. The picture is not clickable: select a node from the list under it. Rows wider than six nodes wrap, and a tree over 16 nodes folds finished leaves into one chip per parent until you press *Show finished nodes*. Graph legend: (colour = track, dashed = proposed, ◆ = needs review, ✓ = validated, ⤵ = merged, red dot = agent running; branches descend and merge), progress in %, "you are here", **end-to-end ETA** on the critical path, an **expected end date** (8h days, or around the clock in auto mode, ± the spread of three-point estimates such as `1h/2h/4h`), and a calibration factor (actual / estimated, measured on real nodes only) that Claude applies to its next estimates.
 - **Cost, before and during.** An estimated cost to finish (remaining effort × an hourly rate: assumed per model family until the session has measured its own, then measured), the amount spent on the plan and in the session (from Claude Code's own cost ledger), and the API usage windows (5-hour, 7-day) as percent used. Alerts at a configurable share of your budget or of a usage window; auto mode stops when the budget is spent.
 - **Wake word.** Start any prompt, typed or dictated, with the wake word (default `ambiflex`): `ambiflex make the signup flow crash-free` applies the method to that task, `ambiflex auto` runs the reviewed plan without approval, `ambiflex stop`, `ambiflex status`. The plugin reads the prompt text, so voice works wherever the app offers dictation; it does not listen to audio itself.
 - **Steer by touch.** Tap a node, then **Validate, Deeper, Wider, Higher, Spawn agent, Abandon, Merge into…**. Each action reaches Claude as a `[tree] …` instruction.
@@ -37,18 +37,18 @@ Cost figures come from Claude Code's own ledger (`$.session.usage().cost.usd`) a
 In a Claude Code terminal session:
 
 ```
-/plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex
+/plugin install ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI
 ```
 
 From a shell:
 
 ```
-claude plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex
+claude plugin install ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI
 ```
 
-In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** `ImadeBenToumAI/ambiflex` → **Add plugin** `ambiflex`.
+In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** `ImadeBenToumAI/ImadeBenToumAI` → **Add plugin** `ambiflex`.
 
-To enable it for every session of a repository, add to that repository's `.claude/settings.json`: `"extraKnownMarketplaces": {"ambiflex": {"source": {"source": "github", "repo": "ImadeBenToumAI/ambiflex"}}}, "enabledPlugins": {"ambiflex@ambiflex": true}`.
+In this repository, `.claude/settings.json` enables the plugin for every session (cloud or local) opened on the repository.
 
 > Status: Claude Code's "function hooks" plugin API is in early access and may change between releases.
 
@@ -61,6 +61,6 @@ To enable it for every session of a repository, add to that repository's `.claud
 ## Develop
 
 ```
-claude plugin validate .
-claude plugin test .
+claude plugin validate plugins/ambiflex
+cd plugins/ambiflex && claude plugin test .
 ```

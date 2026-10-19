@@ -299,16 +299,40 @@ const esc = (text: string) =>
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
 /** Draws the DAG as SVG, top-down like a Git graph: rows = depth, colour = lens, style = status; branches descend and merge. */
-export function renderSvg(tree: Tree, selected: string | undefined): { source: string; width: number; height: number } {
+export interface RenderOptions {
+  /** Hide finished leaves (done, validated, merged, abandoned) behind one chip per parent; default when the tree has more than 16 nodes. */
+  compact?: boolean
+  /** Nodes per line before a row wraps (default 6): keeps a wide tree readable in a narrow pane. */
+  columns?: number
+}
+
+/** Should the pane fold finished leaves by default? Wide trees stay readable that way. */
+export function compactByDefault(tree: Tree): boolean { return tree.nodes.length > 16 }
+
+export function renderSvg(tree: Tree, selected: string | undefined, opts: RenderOptions = {}): { source: string; width: number; height: number } {
   const W = 150, H = 48, GX = 18, GY = 40, PAD = 16, TOP = 30
+  const MAXC = Math.max(1, opts.columns ?? 6)
+  const compact = opts.compact ?? compactByDefault(tree)
+  const cur = current(tree)?.id
+  const hasChildren = new Set(tree.nodes.flatMap(n => n.parents))
+  // In compact mode a finished leaf is folded into a chip under its first parent, unless it is selected or current.
+  const folded = new Map<string, TreeNode[]>()
+  const shown: TreeNode[] = []
+  for (const node of tree.nodes) {
+    const fold = compact && FINISHED.includes(node.status) && !hasChildren.has(node.id) && node.id !== selected && node.id !== cur && node.parents.length > 0
+    if (fold) folded.set(node.parents[0], [...(folded.get(node.parents[0]) ?? []), node])
+    else shown.push(node)
+  }
   const d = depths(tree)
   const rows = new Map<number, TreeNode[]>()
-  for (const node of tree.nodes) {
+  for (const node of shown) {
     const row = d.get(node.id) ?? 0
     rows.set(row, [...(rows.get(row) ?? []), node])
   }
   const pos = new Map<string, { x: number; y: number }>()
+  const chipPos = new Map<string, { x: number; y: number; count: number }>()
   let maxCols = 1
+  let line = 0
   for (const row of [...rows.keys()].sort((a, b) => a - b)) {
     const nodes = rows.get(row)!
     // Barycentre of the parents keeps branches straight and crossings rare.
@@ -317,14 +341,21 @@ export function renderSvg(tree: Tree, selected: string | undefined): { source: s
       return ps.length ? ps.reduce((sum, p) => sum + p.x, 0) / ps.length : 0
     }
     if (row > 0) nodes.sort((a, b) => bary(a) - bary(b))
-    maxCols = Math.max(maxCols, nodes.length)
-    nodes.forEach((node, col) => pos.set(node.id, { x: PAD + col * (W + GX), y: PAD + TOP + row * (H + GY) }))
+    maxCols = Math.max(maxCols, Math.min(nodes.length, MAXC))
+    // A row wider than MAXC wraps onto further lines instead of shrinking the whole picture.
+    nodes.forEach((node, i) => pos.set(node.id, { x: PAD + (i % MAXC) * (W + GX), y: PAD + TOP + (line + Math.floor(i / MAXC)) * (H + GY) }))
+    line += Math.ceil(nodes.length / MAXC)
+  }
+  // Folded chips sit under their parent, on the line below it.
+  for (const [parent, kids] of folded) {
+    const p = pos.get(parent)
+    if (!p) continue
+    chipPos.set(parent, { x: p.x, y: p.y + H + 14, count: kids.length })
   }
   const width = PAD * 2 + maxCols * W + (maxCols - 1) * GX
-  const height = PAD * 2 + TOP + rows.size * H + Math.max(0, rows.size - 1) * GY + 22
-  const cur = current(tree)?.id
+  const height = PAD * 2 + TOP + line * H + Math.max(0, line - 1) * GY + 22 + (chipPos.size ? 10 : 0)
 
-  const edges = tree.nodes.flatMap(node =>
+  const edges = shown.flatMap(node =>
     node.parents.map(parent => {
       const a = pos.get(parent), b = pos.get(node.id)
       if (!a || !b) return ''
@@ -334,7 +365,7 @@ export function renderSvg(tree: Tree, selected: string | undefined): { source: s
     }),
   )
 
-  const boxes = tree.nodes.map(node => {
+  const boxes = shown.map(node => {
     const p = pos.get(node.id)!
     const color = LENS_COLOR[node.lens]
     const faded = node.status === 'abandoned' ? ' opacity="0.35"' : node.status === 'merged' ? ' opacity="0.6"' : ''
@@ -352,6 +383,13 @@ export function renderSvg(tree: Tree, selected: string | undefined): { source: s
       + '</g>'
   })
 
+  const chips = [...chipPos.entries()].map(([parent, c]) => {
+    const names = folded.get(parent)!.map(k => `${k.id} ${k.title} (${STATUS_LABEL[k.status]})`).join('\n')
+    return `<g><title>${esc(names)}</title>`
+      + `<rect x="${c.x}" y="${c.y}" width="${W}" height="18" rx="9" fill="#e2e8f0" stroke="#cbd5e1"/>`
+      + `<text x="${c.x + 10}" y="${c.y + 13}" font-size="10" fill="#475569" font-family="system-ui,sans-serif">${esc(`+${c.count} finished under ${parent}`)}</text></g>`
+  })
+
   const legend = LENSES.map((lens, i) =>
     `<rect x="${PAD + i * 72}" y="${height - 18}" width="10" height="10" rx="2" fill="${LENS_COLOR[lens]}"/>`
     + `<text x="${PAD + i * 72 + 14}" y="${height - 9}" font-size="10" fill="#475569" font-family="system-ui,sans-serif">${LENS_LABEL[lens]}</text>`,
@@ -360,7 +398,7 @@ export function renderSvg(tree: Tree, selected: string | undefined): { source: s
   const title = `<text x="${PAD}" y="${PAD + 8}" font-size="13" font-weight="700" fill="#0f172a" font-family="system-ui,sans-serif">${esc(cut(tree.goal || 'No goal yet', 60))}</text>`
   const w = Math.max(width, PAD * 2 + LENSES.length * 72)
   const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${height}" viewBox="0 0 ${w} ${height}">`
-    + `<rect width="100%" height="100%" fill="#f8fafc" rx="10"/>${title}${edges.join('')}${boxes.join('')}${legend}</svg>`
+    + `<rect width="100%" height="100%" fill="#f8fafc" rx="10"/>${title}${edges.join('')}${boxes.join('')}${chips.join('')}${legend}</svg>`
   return { source, width: w, height }
 }
 

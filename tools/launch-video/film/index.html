@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Ambiflex launch film</title>
+    <script src="assets/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #0b0e17; }
+      :root {
+        --bg: #0b0e17; --fg: #eef0f6; --muted: #9aa3b8; --accent: #7a93ff;
+        --alt: #a78bfa; --dep: #3fb6f0; --ran: #f5a623; --ok: #3ddc84;
+        --sans: Inter, "IBM Plex Sans", system-ui, sans-serif; --mono: "DejaVu Sans Mono", ui-monospace, monospace;
+      }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); font-family: var(--sans); color: var(--fg); }
+      .clip { position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: hidden; }
+      .bg { position: absolute; inset: 0; background:
+        radial-gradient(1200px 700px at 50% 40%, rgba(122, 147, 255, 0.10), transparent 70%), var(--bg); }
+
+      /* 3D stage for the screen captures */
+      .stage { position: absolute; inset: 0; perspective: 2400px; perspective-origin: 50% 50%; }
+      .cam { position: absolute; inset: 0; transform-style: preserve-3d; will-change: transform; }
+      .cam img { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; display: block; border-radius: 0; }
+      .vignette { position: absolute; inset: 0; pointer-events: none;
+        background: radial-gradient(1400px 900px at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.55) 100%); }
+
+      /* subtitles */
+      .sub { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); max-width: 1500px; padding: 12px 22px; border-radius: 10px;
+        background: rgba(0, 0, 0, 0.62); color: #fff; font: 500 30px/1.3 var(--sans); text-align: center; letter-spacing: 0.005em; opacity: 0; white-space: nowrap; }
+      .sub.left { left: 40px; transform: none; text-align: left; max-width: 1100px; white-space: normal; }
+
+      /* chips and callouts */
+      .chip { position: absolute; white-space: nowrap; padding: 12px 20px; border-radius: 12px; font: 600 30px/1 var(--sans); color: #fff; opacity: 0;
+        background: rgba(20, 24, 38, 0.92); border: 2px solid rgba(255, 255, 255, 0.12); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+      .chip i { display: inline-block; width: 16px; height: 16px; border-radius: 4px; margin-right: 12px; vertical-align: -1px; }
+      .chip small { font-weight: 500; color: var(--muted); font-size: 22px; margin-left: 10px; }
+
+      /* cursor */
+      .cursor { position: absolute; width: 36px; height: 36px; border-radius: 50%; border: 3px solid #fff; background: rgba(255, 255, 255, 0.18); opacity: 0;
+        box-shadow: 0 0 0 6px rgba(122, 147, 255, 0.35); transform: translate(-50%, -50%); }
+      .ripple { position: absolute; width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; transform: translate(-50%, -50%); }
+
+      /* terminal */
+      .term { position: absolute; left: 160px; top: 140px; width: 1600px; height: 800px; border-radius: 18px; background: #0e111b;
+        border: 1px solid rgba(255, 255, 255, 0.10); box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6); overflow: hidden; }
+      .term .bar { height: 54px; background: #151a27; display: flex; align-items: center; padding: 0 22px; gap: 10px; font: 500 20px var(--sans); color: var(--muted); }
+      .term .bar b { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+      .term .bar span { margin-left: 14px; }
+      .term pre { margin: 0; padding: 34px 44px; font: 400 30px/1.6 var(--mono); color: #d7dcea; white-space: pre; }
+      .term .ln { display: block; clip-path: inset(0 100% 0 0); }
+      .term .ln.p { color: #9aa3b8; } .term .ln.ok { color: var(--ok); } .term .ln.hl { color: #ffd166; } .term .ln.ac { color: var(--accent); }
+      .term .caret { display: inline-block; width: 16px; height: 34px; background: #d7dcea; vertical-align: -6px; margin-left: 2px; }
+      .termWrap { position: absolute; inset: 0; perspective: 2400px; }
+      .termCam { position: absolute; inset: 0; transform-style: preserve-3d; }
+
+      /* logo */
+      .logoStage { position: absolute; inset: 0; perspective: 1800px; perspective-origin: 50% 42%; }
+      .logo3d { position: absolute; left: 960px; top: 400px; width: 0; height: 0; transform-style: preserve-3d; }
+      .nd { position: absolute; width: 150px; height: 86px; margin-left: -75px; margin-top: -43px; border-radius: 16px; background: #141a2a;
+        border: 3px solid var(--c); box-shadow: 0 0 40px color-mix(in srgb, var(--c) 45%, transparent), inset 0 0 30px rgba(255, 255, 255, 0.03); opacity: 0;
+        transform-style: preserve-3d; }
+      .nd::before { content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 6px; border-radius: 0 0 6px 6px; background: var(--c); }
+      .nd::after { content: ""; position: absolute; inset: 0; border-radius: 16px; transform: translateZ(-24px); background: color-mix(in srgb, var(--c) 35%, #0b0e17); filter: blur(0.5px); }
+      .edges { position: absolute; left: -500px; top: -300px; width: 1000px; height: 700px; overflow: visible; }
+      .edges path { fill: none; stroke: rgba(255, 255, 255, 0.55); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 600; stroke-dashoffset: 600; }
+      .word { position: absolute; left: 0; right: 0; top: 650px; text-align: center; font: 800 132px/1 var(--sans); letter-spacing: -0.035em; color: #f4f6fb; }
+      .word span { display: inline-block; opacity: 0; }
+      .tag { position: absolute; left: 0; right: 0; top: 806px; text-align: center; font: 500 36px/1.3 var(--sans); color: var(--muted); opacity: 0; }
+      .glowBlob { position: absolute; left: 560px; top: 160px; width: 800px; height: 560px; border-radius: 50%; filter: blur(90px); opacity: 0;
+        background: radial-gradient(circle, rgba(122, 147, 255, 0.45), rgba(167, 139, 250, 0.2) 50%, transparent 70%); }
+
+      /* outro */
+      .install { position: absolute; left: 50%; top: 700px; transform: translateX(-50%); padding: 22px 40px; border-radius: 14px; background: #121726;
+        border: 1px solid rgba(255, 255, 255, 0.14); font: 500 36px/1 var(--mono); color: #eef0f6; opacity: 0; white-space: nowrap; }
+      .install b { color: var(--accent); font-weight: 500; }
+      .repo { position: absolute; left: 0; right: 0; top: 820px; text-align: center; font: 500 30px var(--sans); color: var(--muted); opacity: 0; }
+      .method { position: absolute; left: 0; right: 0; top: 820px; text-align: center; font: 500 30px var(--sans); color: var(--muted); opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="104" data-width="1920" data-height="1080">
+
+      <!-- ─── Voice ─── -->
+      <audio id="v-intro" class="clip" data-start="1.2" data-duration="4.3" src="assets/voice/intro.wav" data-volume="1"></audio>
+      <audio id="v-tree" class="clip" data-start="6.6" data-duration="6.3" src="assets/voice/tree.wav" data-volume="1"></audio>
+      <audio id="v-method" class="clip" data-start="14" data-duration="11" src="assets/voice/method.wav" data-volume="1"></audio>
+      <audio id="v-proof" class="clip" data-start="26" data-duration="11.1" src="assets/voice/proof.wav" data-volume="1"></audio>
+      <audio id="v-search" class="clip" data-start="38" data-duration="9.3" src="assets/voice/search.wav" data-volume="1"></audio>
+      <audio id="v-bench" class="clip" data-start="48.6" data-duration="9.5" src="assets/voice/bench.wav" data-volume="1"></audio>
+      <audio id="v-cost" class="clip" data-start="59.6" data-duration="11.9" src="assets/voice/cost.wav" data-volume="1"></audio>
+      <audio id="v-auto" class="clip" data-start="72.6" data-duration="12" src="assets/voice/auto.wav" data-volume="1"></audio>
+      <audio id="v-steer" class="clip" data-start="85.6" data-duration="8.2" src="assets/voice/steer.wav" data-volume="1"></audio>
+      <audio id="v-outro" class="clip" data-start="94.6" data-duration="9" src="assets/voice/outro.wav" data-volume="1"></audio>
+
+      <!-- ─── 1. Logo intro (0–6.6) ─── -->
+      <div id="s-intro" class="clip" data-start="0" data-duration="6.6" data-track-index="0">
+        <div class="bg"></div>
+        <div class="glowBlob" id="blob"></div>
+        <div class="logoStage">
+          <div class="logo3d" id="logo3d">
+            <svg class="edges" viewBox="0 0 1000 700">
+              <path class="e" d="M500 170 C 500 240, 300 220, 300 300" />
+              <path class="e" d="M500 170 C 500 240, 500 240, 500 300" />
+              <path class="e" d="M500 170 C 500 240, 700 220, 700 300" />
+            </svg>
+            <div class="nd" id="n-root" style="--c:#a78bfa; left:0; top:-130px; transform: translateZ(40px)"></div>
+            <div class="nd" id="n-a" style="--c:#a78bfa; left:-200px; top:30px; transform: translateZ(0)"></div>
+            <div class="nd" id="n-d" style="--c:#3fb6f0; left:0; top:30px; transform: translateZ(-30px)"></div>
+            <div class="nd" id="n-r" style="--c:#f5a623; left:200px; top:30px; transform: translateZ(-60px)"></div>
+          </div>
+        </div>
+        <div class="word" id="word"><span>A</span><span>m</span><span>b</span><span>i</span><span>f</span><span>l</span><span>e</span><span>x</span></div>
+        <div class="tag" id="tag">An ambitious reasoning tree for Claude Code</div>
+      </div>
+
+      <!-- ─── 2. The whole tree (6–14) ─── -->
+      <div id="s-tree" class="clip" data-start="6" data-duration="8" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-tree"><img src="assets/img/tree.png" alt="" /></div></div>
+        <div class="vignette"></div>
+        <div class="sub" id="sub-tree">A plan Claude Code executed on its own. Nineteen nodes. One evening.</div>
+      </div>
+
+      <!-- ─── 3. Method: altitude, depth, range (13.5–26) ─── -->
+      <div id="s-method" class="clip" data-start="13.5" data-duration="12.5" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-method"><img src="assets/img/tracks.png" alt="" /></div></div>
+        <div class="vignette"></div>
+        <div class="chip" id="chip-alt" style="left:1340px; top:300px"><i style="background:#a78bfa"></i>Altitude <small>the goal behind the goal</small></div>
+        <div class="chip" id="chip-dep" style="left:1340px; top:380px"><i style="background:#3fb6f0"></i>Depth <small>what the best expert would do</small></div>
+        <div class="chip" id="chip-ran" style="left:1340px; top:460px"><i style="background:#f5a623"></i>Range <small>which other disciplines help</small></div>
+        <div class="sub" id="sub-method">Felix Rieseberg's method: altitude, depth, range.</div>
+      </div>
+
+      <!-- ─── 4. Proof (25.5–38) ─── -->
+      <div id="s-proof" class="clip" data-start="25.5" data-duration="12.5" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-proof"><img src="assets/img/proof.png" alt="" /></div></div>
+        <div class="vignette"></div>
+        <div class="sub left" id="sub-proof">A node is not done because the model says so. It needs a proof. Only I can validate.</div>
+      </div>
+
+      <!-- ─── 5. Tree search (37.5–48.6) ─── -->
+      <div id="s-search" class="clip" data-start="37.5" data-duration="11.1" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-search"><img src="assets/img/search.png" alt="" /></div></div>
+        <div class="vignette"></div>
+        <div class="chip" id="chip-s1" style="left:60px; top:560px"><i style="background:#9aa3b8"></i>n17 no object spread <small>SCORE 3.15</small></div>
+        <div class="chip" id="chip-s2" style="left:60px; top:640px"><i style="background:#9aa3b8"></i>n18 single pass <small>SCORE 6.66</small></div>
+        <div class="chip" id="chip-s3" style="left:60px; top:720px; border-color:#3ddc84"><i style="background:#3ddc84"></i>n19 shaped rows <small style="color:#3ddc84">SCORE 7.30 · merged</small></div>
+        <div class="sub left" id="sub-search">Three agents, three branches, one benchmark.</div>
+      </div>
+
+      <!-- ─── 6. Benchmark terminal (48–59.6) ─── -->
+      <div id="s-bench" class="clip" data-start="48" data-duration="11.6" data-track-index="0" style="opacity:0">
+        <div class="bg"></div>
+        <div class="termWrap"><div class="termCam" id="cam-bench">
+          <div class="term">
+            <div class="bar"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b><span>imade@mac — ImadeBenToumAI — zsh</span></div>
+            <pre id="t-bench"><span class="ln p">$ node demo/bench.js</span><span class="ln">ms: 334.2</span><span class="ln p">$ git merge ambiflex/n19-track-shaped-rows</span><span class="ln">Updating 0353a29..6b5b1e5   demo/parse.js | 61 +++++-----</span><span class="ln p">$ BASELINE_MS=334 node demo/bench.js</span><span class="ln hl">ms: 44.0</span><span class="ln ok">SCORE: 7.38</span><span class="ln p">$ <span class="caret" id="caret-bench"></span></span></pre>
+          </div>
+        </div></div>
+        <div class="sub" id="sub-bench">Then I ran the benchmark myself. 334 ms down to 44.</div>
+      </div>
+
+      <!-- ─── 7. Cost and time (59–72.6) ─── -->
+      <div id="s-cost" class="clip" data-start="59" data-duration="13.6" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-cost"><img src="assets/img/cost.png" alt="" /></div></div>
+        <div class="vignette"></div>
+        <div class="chip" id="chip-cal" style="left:1240px; top:300px; font-size:34px"><i style="background:#7a93ff"></i>calibration ×0.01 <small>a "2 day" node, done in 10 min</small></div>
+        <div class="sub" id="sub-cost">Cost and time on screen before and during. Estimates calibrated against real timings.</div>
+      </div>
+
+      <!-- ─── 8. Auto mode terminal (72–85.6) ─── -->
+      <div id="s-auto" class="clip" data-start="72" data-duration="13.6" data-track-index="0" style="opacity:0">
+        <div class="bg"></div>
+        <div class="termWrap"><div class="termCam" id="cam-auto">
+          <div class="term">
+            <div class="bar"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b><span>claude — ImadeBenToumAI — auto mode</span></div>
+            <pre id="t-auto"><span class="ln ac">[tree] Auto mode, turn 14/40. Work on n7 "Tree search". Budget $59 of $120.</span><span class="ln">Working on n7. Spawning three agents, one worktree branch each.</span><span class="ln">  n17  Track: no object spread   SCORE 3.15</span><span class="ln">  n18  Track: single pass        SCORE 6.66</span><span class="ln ok">  n19  Track: shaped rows        SCORE 7.30  ← kept, merged</span><span class="ln">n7 done. Verified by: independent benchmark, 7.38×.</span><span class="ln ac">[tree] Next open node: n8 "Publish and submit". Hand-over in 1 turn.</span><span class="ln p">▍<span class="caret" id="caret-auto"></span></span></pre>
+          </div>
+        </div></div>
+        <div class="sub" id="sub-auto">After each turn, the plugin hands Claude the next open node.</div>
+      </div>
+
+      <!-- ─── 9. Steering (85–94.6) ─── -->
+      <div id="s-steer" class="clip" data-start="85" data-duration="9.6" data-track-index="0" style="opacity:0">
+        <div class="stage"><div class="cam" id="cam-steer"><img src="assets/img/steer.png" alt="" /><div class="ripple" id="ripple" style="left:1053px; top:896px"></div><div class="cursor" id="cursor" style="left:0; top:0"></div></div></div>
+        <div class="vignette"></div>
+        <div class="sub left" id="sub-steer">And I steer from anywhere. Validate, go deeper, go wider, prune.</div>
+      </div>
+
+      <!-- ─── 10. Outro (94–104) ─── -->
+      <div id="s-outro" class="clip" data-start="94" data-duration="10" data-track-index="0" style="opacity:0">
+        <div class="bg"></div>
+        <div class="glowBlob" id="blob2" style="opacity:.9"></div>
+        <div class="logoStage">
+          <div class="logo3d" id="logo3d-2" style="top:330px">
+            <svg class="edges" viewBox="0 0 1000 700">
+              <path class="e2" d="M500 170 C 500 240, 300 220, 300 300" />
+              <path class="e2" d="M500 170 C 500 240, 500 240, 500 300" />
+              <path class="e2" d="M500 170 C 500 240, 700 220, 700 300" />
+            </svg>
+            <div class="nd o2" style="--c:#a78bfa; left:0; top:-130px"></div>
+            <div class="nd o2" style="--c:#a78bfa; left:-200px; top:30px"></div>
+            <div class="nd o2" style="--c:#3fb6f0; left:0; top:30px"></div>
+            <div class="nd o2" style="--c:#f5a623; left:200px; top:30px"></div>
+          </div>
+        </div>
+        <div class="word" id="word2" style="top:540px"><span>A</span><span>m</span><span>b</span><span>i</span><span>f</span><span>l</span><span>e</span><span>x</span></div>
+        <div class="install" id="install"><b>/plugin install</b> ambiflex --marketplace ImadeBenToumAI/ImadeBenToumAI</div>
+        <div class="repo" id="repo">Open source · Apache-2.0 · github.com/ImadeBenToumAI</div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const tl = gsap.timeline({ paused: true });
+        const E = "power2.out", EI = "power2.inOut";
+        const fadeIn = (sel, at, d = 0.6) => tl.to(sel, { opacity: 1, duration: d, ease: E }, at);
+        const fadeOut = (sel, at, d = 0.6) => tl.to(sel, { opacity: 0, duration: d, ease: E }, at);
+        const sub = (sel, at, end) => { tl.fromTo(sel, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, at); tl.to(sel, { opacity: 0, duration: 0.4 }, end - 0.4); };
+        const chip = (sel, at) => tl.fromTo(sel, { opacity: 0, x: 40, scale: 0.9 }, { opacity: 1, x: 0, scale: 1, duration: 0.5, ease: "back.out(1.6)" }, at);
+        // Camera move on a capture: from pose A to pose B over the scene.
+        const cam = (sel, from, to, at, d) => tl.fromTo(sel, from, { ...to, duration: d, ease: EI }, at);
+        // Typed terminal: reveal line i at time t over `d` seconds (clip-path wipe), then blink caret.
+        const typeLines = (pre, times, caret) => {
+          const lines = document.querySelectorAll(pre + " .ln");
+          times.forEach(([t, d], i) => { if (lines[i]) tl.to(lines[i], { clipPath: "inset(0 0% 0 0)", duration: d, ease: "none" }, t); });
+          for (let k = 0; k < 40; k++) tl.set(caret, { opacity: k % 2 }, times[0][0] + k * 0.5);
+        };
+
+        /* 1. Intro: nodes fly in, edges draw, the tree swings in 3D, the word rises. */
+        tl.set("#logo3d", { rotationY: -55, rotationX: 24, scale: 0.8 }, 0);
+        tl.to("#blob", { opacity: 1, duration: 1.2, ease: E }, 0);
+        tl.fromTo("#n-root", { opacity: 0, y: -80, z: 300 }, { opacity: 1, y: 0, z: 40, duration: 0.8, ease: "back.out(1.4)" }, 0.2);
+        tl.fromTo("#n-a", { opacity: 0, y: 120, z: -200 }, { opacity: 1, y: 0, z: 0, duration: 0.8, ease: "back.out(1.4)" }, 0.55);
+        tl.fromTo("#n-d", { opacity: 0, y: 120, z: -200 }, { opacity: 1, y: 0, z: -30, duration: 0.8, ease: "back.out(1.4)" }, 0.7);
+        tl.fromTo("#n-r", { opacity: 0, y: 120, z: -200 }, { opacity: 1, y: 0, z: -60, duration: 0.8, ease: "back.out(1.4)" }, 0.85);
+        tl.to("#s-intro .e", { strokeDashoffset: 0, duration: 0.9, ease: E, stagger: 0.12 }, 0.9);
+        tl.to("#logo3d", { rotationY: 18, rotationX: 8, scale: 1, duration: 3.2, ease: EI }, 0.3);
+        tl.to("#logo3d", { rotationY: 0, rotationX: 0, duration: 2.4, ease: EI }, 3.5);
+        tl.to("#word span", { opacity: 1, y: 0, duration: 0.5, ease: E, stagger: 0.06 }, 2.0);
+        tl.set("#word span", { y: 40 }, 0);
+        tl.to("#tag", { opacity: 1, y: 0, duration: 0.6, ease: E }, 2.9);
+        tl.set("#tag", { y: 16 }, 0);
+        fadeOut("#s-intro", 6.0, 0.6);
+
+        /* 2. The whole tree: slow 3D push-in. */
+        fadeIn("#s-tree", 6.0, 0.7);
+        cam("#cam-tree", { rotationY: -8, rotationX: 6, scale: 0.94, x: 40 }, { rotationY: 0, rotationX: 0, scale: 1.02, x: 0 }, 6, 8);
+        sub("#sub-tree", 6.8, 13.5);
+        fadeOut("#s-tree", 13.3, 0.6);
+
+        /* 3. Method: the top of the tree, three labels. */
+        fadeIn("#s-method", 13.3, 0.6);
+        cam("#cam-method", { scale: 1.0, x: 0, y: 0 }, { scale: 1.08, x: -60, y: 20 }, 13.5, 12.5);
+        chip("#chip-alt", 16.2); chip("#chip-dep", 18.4); chip("#chip-ran", 20.6);
+        sub("#sub-method", 14.2, 25.5);
+        fadeOut("#s-method", 25.3, 0.6);
+
+        /* 4. Proof: the sheet with the verification line highlighted. */
+        fadeIn("#s-proof", 25.3, 0.6);
+        cam("#cam-proof", { rotationY: 6, scale: 0.98, x: -30 }, { rotationY: 0, scale: 1.05, x: 0 }, 25.5, 12.5);
+        sub("#sub-proof", 26.2, 37.5);
+        fadeOut("#s-proof", 37.3, 0.6);
+
+        /* 5. Tree search: n16, three scores pop in. */
+        fadeIn("#s-search", 37.3, 0.6);
+        cam("#cam-search", { rotationY: -5, scale: 1.0 }, { rotationY: 0, scale: 1.04 }, 37.5, 11);
+        chip("#chip-s1", 40.5); chip("#chip-s2", 41.4); chip("#chip-s3", 42.3);
+        sub("#sub-search", 38.2, 48);
+        fadeOut("#s-search", 47.9, 0.6);
+
+        /* 6. Benchmark terminal, typed. */
+        fadeIn("#s-bench", 47.9, 0.5);
+        cam("#cam-bench", { rotationX: 10, rotationY: -8, scale: 0.9, y: 40 }, { rotationX: 0, rotationY: 0, scale: 1, y: 0 }, 48, 3.2);
+        typeLines("#t-bench", [[49.0, 0.9], [50.2, 0.3], [51.0, 1.3], [52.5, 0.6], [53.4, 1.2], [54.9, 0.3], [55.4, 0.4], [56.2, 0.1]], "#caret-bench");
+        sub("#sub-bench", 48.8, 59);
+        fadeOut("#s-bench", 58.9, 0.6);
+
+        /* 7. Cost: dive into the header, pull back, calibration chip. */
+        fadeIn("#s-cost", 58.9, 0.6);
+        tl.set("#cam-cost", { transformOrigin: "30% 4%" }, 58.9);
+        cam("#cam-cost", { scale: 1.0, rotationX: 0 }, { scale: 2.1, rotationX: 2 }, 59, 4.5);
+        cam("#cam-cost", { scale: 2.1, rotationX: 2 }, { scale: 1.04, rotationX: 0 }, 65.5, 4.5);
+        chip("#chip-cal", 67.0);
+        sub("#sub-cost", 59.8, 72);
+        fadeOut("#s-cost", 71.9, 0.6);
+
+        /* 8. Auto-mode terminal. */
+        fadeIn("#s-auto", 71.9, 0.5);
+        cam("#cam-auto", { rotationX: -8, rotationY: 8, scale: 0.9, y: -40 }, { rotationX: 0, rotationY: 0, scale: 1, y: 0 }, 72, 3.2);
+        typeLines("#t-auto", [[73.0, 1.4], [74.8, 1.0], [76.2, 0.6], [77.0, 0.6], [77.8, 0.8], [79.2, 1.0], [80.8, 1.4], [82.6, 0.1]], "#caret-auto");
+        sub("#sub-auto", 72.8, 85);
+        fadeOut("#s-auto", 84.9, 0.6);
+
+        /* 9. Steering: the cursor travels to Validate and clicks. */
+        fadeIn("#s-steer", 84.9, 0.6);
+        cam("#cam-steer", { rotationY: 7, scale: 0.98, x: -40 }, { rotationY: 0, scale: 1.04, x: 0 }, 85, 9.6);
+        tl.set("#cursor", { x: 700, y: 1000 }, 85);
+        tl.to("#cursor", { opacity: 1, duration: 0.3 }, 86.0);
+        tl.to("#cursor", { x: 1053, y: 896, duration: 1.4, ease: EI }, 86.3);
+        tl.to("#cursor", { scale: 0.75, duration: 0.12, yoyo: true, repeat: 1 }, 87.8);
+        tl.fromTo("#ripple", { opacity: 1, scale: 1 }, { opacity: 0, scale: 5, duration: 0.9, ease: E }, 87.9);
+        tl.to("#cursor", { opacity: 0, duration: 0.4 }, 90.5);
+        sub("#sub-steer", 85.8, 94);
+        fadeOut("#s-steer", 93.9, 0.6);
+
+        /* 10. Outro: the logo settles, install line, repository. */
+        fadeIn("#s-outro", 93.9, 0.7);
+        tl.set("#logo3d-2", { rotationY: 30, rotationX: 10, scale: 0.9 }, 93.9);
+        tl.to("#logo3d-2", { rotationY: 0, rotationX: 0, scale: 1, duration: 3.5, ease: EI }, 94);
+        tl.to("#s-outro .nd", { opacity: 1, duration: 0.5, stagger: 0.1 }, 94.2);
+        tl.to("#s-outro .e2", { strokeDashoffset: 0, duration: 0.8, stagger: 0.1 }, 94.6);
+        tl.set("#word2 span", { y: 30 }, 93.9);
+        tl.to("#word2 span", { opacity: 1, y: 0, duration: 0.5, ease: E, stagger: 0.05 }, 95.0);
+        tl.fromTo("#install", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 97.2);
+        tl.fromTo("#repo", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 98.2);
+        tl.to("#s-outro", { opacity: 0, duration: 1.0 }, 103);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines["main"] = tl;
+        tl.seek(0);
+      })();
+    </script>
+  </body>
+</html>

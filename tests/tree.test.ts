@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { arrival, assumedRate, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -104,6 +104,25 @@ test('draws top-down: children sit below their parents', () => {
   expect(y('n1') < y('n2')).toBe(true)
   expect(y('n2') < y('n4')).toBe(true)
   expect(y('n2')).toBe(y('n3'))
+})
+
+test('wraps a wide row and folds finished leaves so a big tree stays readable', () => {
+  // 24 children under one goal: 22 done steps and 2 open ones.
+  let t = upsert(emptyTree(), { id: 'g', title: 'Goal', lens: 'goal' }, T0).tree
+  for (let i = 1; i <= 24; i++) {
+    const done = i <= 22
+    t = upsert(t, { id: `s${i}`, title: `Step ${i}`, lens: 'step', parents: ['g'], ...(done ? { status: 'done', verification: 'test' } : {}) }, T0).tree
+  }
+  expect(compactByDefault(t)).toBe(true)
+  const all = renderSvg(t, undefined, { compact: false })
+  expect(all.width).toBeLessThan(1200)            // six columns, not twenty-four
+  expect(all.height).toBeGreaterThan(300)          // the row wrapped onto several lines
+  const compact = renderSvg(t, undefined)
+  expect(compact.source.includes('+22 finished under g')).toBe(true)
+  expect(compact.source.includes('Step 23')).toBe(true)
+  expect(compact.source.includes('Step 5<')).toBe(false)
+  // A folded node comes back when selected.
+  expect(renderSvg(t, 's5').source.includes('Step 5<')).toBe(true)
 })
 
 test('projects the cost of what is left from the hourly rate', () => {

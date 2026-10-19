@@ -59,6 +59,8 @@ declare module 'claude-code' {
       selected: string
       expanded: boolean
       tab: Tab
+      /** Graph view: '' default for the tree's size, 'all' every node, 'compact' finished leaves folded. */
+      view: '' | 'all' | 'compact'
       git: string
       agents: string[]
       branches: Record<string, BranchInfo>
