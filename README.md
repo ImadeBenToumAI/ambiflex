@@ -13,7 +13,8 @@ Ambiflex turns Felix Rieseberg's **be-ambitious** method (Altitude, Depth, Range
 - **Tree search.** `tree_explore <node>` (or *Explore tracks* on a node) spawns one subagent per competing track, in parallel, each in its own branch, scored by the judge the track declares (a test, a benchmark, a metric); the scores land on the nodes as the agents report, *Prune weak* keeps the best and *Merge best* folds it in. The budget (agents × minutes) is shown before launch.
 - **Git branches tab.** Branches, commits and merges, refreshed after every git command.
 - **History without conflicts.** Every change is one line appended to `.ambiflex/log.jsonl` (merged by Git with `merge=union`, so two sessions never conflict); the tree is replayed from it, and `.ambiflex/tree.json` is kept as a readable snapshot.
-- **Mobile.** The mobile app places no panel, so `/ambiflex` draws the tree inline in the transcript. For a persistent, touch-first view, Claude can publish an "Ambiflex" claude.ai page that mirrors the tree live and sends your taps back as comments.
+- **Interactive page.** `/ambiflex page` (or *Interactive page* in the panel) asks Claude to publish a private claude.ai page for the project: the tree drawn full width with clickable nodes, the action sheet (Validate, Deeper, Wider…), List and Git tabs, live as Claude updates the tree. Your taps reach Claude as comments. It needs a Claude account that can publish pages; the page stays private until you share it.
+- **Mobile.** The mobile app places no panel, so `/ambiflex` draws the tree inline in the transcript; the interactive page is the touch-first view.
 
 Claude fills the tree through the tools `tree_set_goal`, `tree_upsert`, `tree_merge`, `tree_get`, `tree_auto`.
 
@@ -22,6 +23,7 @@ Claude fills the tree through the tools `tree_set_goal`, `tree_upsert`, `tree_me
 | Command | Effect |
 |---|---|
 | `/ambiflex` | Open the panel (or draw the tree inline on mobile) |
+| `/ambiflex page` | Publish (or republish) the interactive page for this project |
 | `/ambiflex auto [turns]` | Run the plan without approval; optional turn budget (default 40) |
 | `/ambiflex stop` | Stop auto mode |
 | `/ambiflex status` | Text report: progress, ETA, calibration, nodes |

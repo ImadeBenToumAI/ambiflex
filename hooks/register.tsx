@@ -3,6 +3,7 @@ import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 
 import type { BranchInfo, Cost, Status, Tab, Tree } from '../types'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
+import { PAGE_HTML } from './page'
 import type { Event } from './log'
 import {
   LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
@@ -17,6 +18,7 @@ const FILE = () => `${root}.ambiflex/tree.json`
 const LOG = () => `${root}${LOG_FILE}`
 const ATTRS = () => `${root}.ambiflex/.gitattributes`
 const ARTIFACT_FILE = '.ambiflex/artifact.json'
+const PAGE_FILE = '.ambiflex/page.html'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -249,6 +251,26 @@ async function countTurn($: $) {
   await commit($, { kind: 'auto', on: true, turns: t.auto.turns + 1 }).catch(() => undefined)
 }
 
+/**
+ * Writes the interactive page next to the tree and asks Claude to publish it as a claude.ai page.
+ * Publishing is Claude's (the Artifact tool), never the plugin's: the person sees and approves it.
+ */
+async function pageRequest($: $): Promise<{ ask: string; text: string }> {
+  await load($)
+  await $.fs.write(`${root}${PAGE_FILE}`, PAGE_HTML)
+  const known = await $.fs.exists(`${root}${ARTIFACT_FILE}`).catch(() => false)
+  const ask = known
+    ? `[tree] The interactive Ambiflex page already exists: its URL is in ${ARTIFACT_FILE}. Republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, then sync the tree into it (method item 9) and give me the link.`
+    : `[tree] Publish the interactive Ambiflex page for this project. Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool: icon "tree", description "Live reasoning tree for this project", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>"} in ${ARTIFACT_FILE}, then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
+  return { ask, text: known ? 'Asking Claude to republish the interactive page.' : 'Asking Claude to publish the interactive page.' }
+}
+
+/** From the panel: a press may submit a prompt (a command may not: it holds the turn). */
+async function requestPage($: $) {
+  const { ask } = await pageRequest($)
+  await $.prompt.submit({ text: ask })
+}
+
 async function kick($: $) {
   const t = await read($, tree)
   if (!t.auto.on) return
@@ -304,6 +326,7 @@ async function drawTree($: $, e: ResolveInput) {
       {t.auto.on
         ? <Button key="auto-stop" onPress={() => stopAuto($, 'stopped from the panel')}>Stop auto</Button>
         : <Button key="auto-start" onPress={() => startAuto($, undefined, true)}>Run on auto</Button>}
+      <Button key="page" onPress={() => requestPage($)}>Interactive page</Button>
     </Box>
   )
 
@@ -570,8 +593,8 @@ export const register: Register = (on, opts) => {
     }
     await $.command.register({
       name: 'ambiflex',
-      description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports.',
-      argumentHint: '[auto [turns] | stop | status]',
+      description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
+      argumentHint: '[auto [turns] | stop | status | page]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -584,6 +607,7 @@ export const register: Register = (on, opts) => {
     if (verb === 'auto') return { text: await startAuto($, arg ? Number(arg) || undefined : undefined, true) }
     if (verb === 'stop') { await stopAuto($, 'stopped by command'); return { text: 'Auto mode off.' } }
     if (verb === 'status') return { text: outline(await read($, tree)) }
+    if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
     await load($)
     await refreshGit($)
     await openPane($)

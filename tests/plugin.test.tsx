@@ -212,3 +212,19 @@ test('tree search: one agent per track, scores land from their reports, prune ke
   expect(text).toContain('n3 [Step · abandoned] Rewrite')
   expect(text).toContain('n4 [Step · proposed] Streaming')
 })
+
+test('/ambiflex page writes the page and asks Claude to publish it, then to republish once it exists', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  bottoms(on, [], files)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Page' } as never)
+  const first = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  await flush()
+  const page = [...files].find(([k]) => k.endsWith('.ambiflex/page.html'))?.[1]
+  expect(String((first as { text?: unknown }).text)).toContain('publish')
+  expect(String((first as { context?: string[] }).context?.[0])).toContain('Publish the interactive Ambiflex page')
+  expect(page).toContain('<title>Ambiflex</title>')
+  files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/x"}')
+  const again = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  expect(String((again as { context?: string[] }).context?.[0])).toContain('Republish')
+})
