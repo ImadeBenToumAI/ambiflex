@@ -48,6 +48,8 @@ claude plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex
 
 In the desktop app: **+** next to the prompt box → **Plugins** → **Add marketplace** `ImadeBenToumAI/ambiflex` → **Add plugin** `ambiflex`.
 
+If Ambiflex helps you, a star on this repository helps other developers find it.
+
 In this repository, `.claude/settings.json` enables the plugin for every session (cloud or local) opened on the repository.
 
 > Status: Claude Code's "function hooks" plugin API is in early access and may change between releases.
