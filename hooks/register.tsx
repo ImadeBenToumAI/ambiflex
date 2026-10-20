@@ -6,7 +6,7 @@ import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log
 import type { Event } from './log'
 import {
   LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, upsert,
+  merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
 } from './tree'
 
 const PLUGIN = 'ambiflex'
@@ -344,37 +344,39 @@ async function drawTree($: $, e: ResolveInput) {
   const viewMode = await read($, view)
   const compact = viewMode === 'compact' ? true : viewMode === 'all' ? false : compactByDefault(t)
   const svg = renderSvg(t, sel, { compact })
-  // The picture is not clickable: nodes are selected from the list below it. The toggle keeps wide trees readable.
-  const graph = ui.Svg && t.nodes.length > 0
+  // The picture (Claude Code draws an Svg as an image: nothing in it can be pressed) shows the edges;
+  // the grid under it is the same tree, level by level, as buttons that select a node.
+  const layout = layoutRows(t, sel, { compact })
+  const badge = (status: Status) => (status === 'validated' ? '✓ ' : status === 'merged' ? '⤵ ' : status === 'review' ? '◆ ' : status === 'exploring' ? '● ' : '')
+  const graph = t.nodes.length > 0
     ? (
-      <Box flexDirection="column">
-        <ui.Svg source={svg.source} alt={outline(t)} width={svg.width} />
+      <Box flexDirection="column" gap={1}>
+        {ui.Svg && <ui.Svg source={svg.source} alt={outline(t)} width={svg.width} />}
+        {layout.rows.map((row, i) => (
+          <Box key={`row-${i}`} flexDirection="row" flexWrap="wrap" gap={1}>
+            {row.map(n => (
+              <Button
+                key={`node-${n.id}`}
+                variant={n.id === sel ? 'primary' : undefined}
+                onPress={() => update($, selected, s => (s === n.id ? '' : n.id))}
+              >
+                {`${badge(n.status)}${n.id} ${n.title}`}
+              </Button>
+            ))}
+          </Box>
+        ))}
         {t.nodes.length > 8 && (
           <Box flexDirection="row" gap={1}>
             <Button key="view-toggle" onPress={() => update($, view, () => (compact ? 'all' : 'compact'))}>
-              {compact ? 'Show finished nodes' : 'Fold finished nodes'}
+              {compact ? `Show finished nodes (${layout.folded})` : 'Fold finished nodes'}
             </Button>
-            <Text dimColor>Select a node from the list below.</Text>
+            <Text dimColor>Tap a node to open it.</Text>
           </Box>
         )}
       </Box>
     )
     : null
 
-  const list = (
-    <Box flexDirection="column">
-      {t.nodes.map(n => (
-        <Button
-          key={`node-${n.id}`}
-          plain
-          onPress={() => update($, selected, s => (s === n.id ? '' : n.id))}
-        >
-          {`${n.id === sel ? '▶ ' : ''}${n.id} ${n.title} `}
-          <Text dimColor>{`${LENS_LABEL[n.lens]} · ${STATUS_LABEL[n.status]}${n.estimate ? ` · ${n.estimate}` : ''}`}</Text>
-        </Button>
-      ))}
-    </Box>
-  )
 
   const others = t.nodes.filter(n => node && n.id !== node.id && n.status !== 'abandoned')
   const detail = node && (
@@ -459,7 +461,6 @@ async function drawTree($: $, e: ResolveInput) {
       {graph}
       {t.nodes.length === 0 && <Text dimColor>The tree fills up as soon as you give me a task.</Text>}
       {detail}
-      {list}
     </Box>
   )
 }

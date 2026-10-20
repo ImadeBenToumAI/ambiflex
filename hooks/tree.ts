@@ -312,6 +312,29 @@ export interface RenderOptions {
 /** Should the pane fold finished leaves by default? Wide trees stay readable that way. */
 export function compactByDefault(tree: Tree): boolean { return tree.nodes.length > 16 }
 
+/** The nodes as the picture lays them out: one array per drawn line, folded leaves left out. */
+export function layoutRows(tree: Tree, selected: string | undefined, opts: RenderOptions = {}): { rows: TreeNode[][]; folded: number } {
+  const MAXC = Math.max(1, opts.columns ?? 6)
+  const compact = opts.compact ?? compactByDefault(tree)
+  const cur = current(tree)?.id
+  const hasChildren = new Set(tree.nodes.flatMap(n => n.parents))
+  let folded = 0
+  const shown = tree.nodes.filter(node => {
+    const fold = compact && FINISHED.includes(node.status) && !hasChildren.has(node.id) && node.id !== selected && node.id !== cur && node.parents.length > 0
+    if (fold) folded++
+    return !fold
+  })
+  const d = depths(tree)
+  const byDepth = new Map<number, TreeNode[]>()
+  for (const node of shown) byDepth.set(d.get(node.id) ?? 0, [...(byDepth.get(d.get(node.id) ?? 0) ?? []), node])
+  const rows: TreeNode[][] = []
+  for (const k of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const row = byDepth.get(k)!
+    for (let i = 0; i < row.length; i += MAXC) rows.push(row.slice(i, i + MAXC))
+  }
+  return { rows, folded }
+}
+
 export function renderSvg(tree: Tree, selected: string | undefined, opts: RenderOptions = {}): { source: string; width: number; height: number } {
   const W = 150, H = 48, GX = 18, GY = 40, PAD = 16, TOP = 30
   const MAXC = Math.max(1, opts.columns ?? 6)
@@ -374,14 +397,14 @@ export function renderSvg(tree: Tree, selected: string | undefined, opts: Render
     const faded = node.status === 'abandoned' ? ' opacity="0.35"' : node.status === 'merged' ? ' opacity="0.6"' : ''
     const dash = node.status === 'proposed' ? ' stroke-dasharray="5 4"' : ''
     const strokeW = node.id === selected ? 3.5 : node.id === cur ? 2.5 : 1.5
-    const fill = FINISHED.includes(node.status) ? `${color}22` : '#ffffff'
+    const fill = FINISHED.includes(node.status) ? `${color}22` : 'var(--card)'
     const badge = node.status === 'validated' ? '✓ ' : node.status === 'merged' ? '⤵ ' : node.status === 'review' ? '◆ ' : node.status === 'exploring' ? '● ' : ''
     const meta = [node.id, STATUS_LABEL[node.status], node.estimate].filter(Boolean).join(' · ')
     return `<g${faded}><title>${esc(`${node.title}\n${node.summary ?? ''}`)}</title>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="9" fill="${fill}" stroke="${color}" stroke-width="${strokeW}"${dash}/>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="5" rx="2.5" fill="${color}"/>`
-      + `<text x="${p.x + 10}" y="${p.y + 22}" font-size="12" font-weight="600" fill="#0f172a" font-family="system-ui,sans-serif">${esc(badge + cut(node.title, 20))}</text>`
-      + `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" fill="#475569" font-family="system-ui,sans-serif">${esc(cut(meta, 28))}</text>`
+      + `<text x="${p.x + 10}" y="${p.y + 22}" font-size="12" font-weight="600" class="t1" font-family="system-ui,sans-serif">${esc(badge + cut(node.title, 20))}</text>`
+      + `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" class="t2" font-family="system-ui,sans-serif">${esc(cut(meta, 28))}</text>`
       + (node.agent ? `<circle cx="${p.x + W - 9}" cy="${p.y + 14}" r="4" fill="#ef4444"><animate attributeName="opacity" values="1;0.3;1" dur="1.4s" repeatCount="indefinite"/></circle>` : '')
       + '</g>'
   })
@@ -389,19 +412,23 @@ export function renderSvg(tree: Tree, selected: string | undefined, opts: Render
   const chips = [...chipPos.entries()].map(([parent, c]) => {
     const names = folded.get(parent)!.map(k => `${k.id} ${k.title} (${STATUS_LABEL[k.status]})`).join('\n')
     return `<g><title>${esc(names)}</title>`
-      + `<rect x="${c.x}" y="${c.y}" width="${W}" height="18" rx="9" fill="#e2e8f0" stroke="#cbd5e1"/>`
-      + `<text x="${c.x + 10}" y="${c.y + 13}" font-size="10" fill="#475569" font-family="system-ui,sans-serif">${esc(`+${c.count} finished under ${parent}`)}</text></g>`
+      + `<rect x="${c.x}" y="${c.y}" width="${W}" height="18" rx="9" fill="var(--chip)" stroke="var(--chipline)"/>`
+      + `<text x="${c.x + 10}" y="${c.y + 13}" font-size="10" class="t2" font-family="system-ui,sans-serif">${esc(`+${c.count} finished under ${parent}`)}</text></g>`
   })
 
   const legend = LENSES.map((lens, i) =>
     `<rect x="${PAD + i * 72}" y="${height - 18}" width="10" height="10" rx="2" fill="${LENS_COLOR[lens]}"/>`
-    + `<text x="${PAD + i * 72 + 14}" y="${height - 9}" font-size="10" fill="#475569" font-family="system-ui,sans-serif">${LENS_LABEL[lens]}</text>`,
+    + `<text x="${PAD + i * 72 + 14}" y="${height - 9}" font-size="10" class="t2" font-family="system-ui,sans-serif">${LENS_LABEL[lens]}</text>`,
   ).join('')
 
-  const title = `<text x="${PAD}" y="${PAD + 8}" font-size="13" font-weight="700" fill="#0f172a" font-family="system-ui,sans-serif">${esc(cut(tree.goal || 'No goal yet', 60))}</text>`
+  const title = `<text x="${PAD}" y="${PAD + 8}" font-size="13" font-weight="700" class="t1" font-family="system-ui,sans-serif">${esc(cut(tree.goal || 'No goal yet', 60))}</text>`
   const w = Math.max(width, PAD * 2 + LENSES.length * 72)
   const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${height}" viewBox="0 0 ${w} ${height}">`
-    + `<rect width="100%" height="100%" fill="#f8fafc" rx="10"/>${title}${edges.join('')}${boxes.join('')}${chips.join('')}${legend}</svg>`
+    // Colours follow the viewer's theme: light by default, dark when the app is dark.
+    + `<style>:root{--bg:#f8fafc;--card:#ffffff;--t1:#0f172a;--t2:#475569;--chip:#e2e8f0;--chipline:#cbd5e1}`
+    + `@media (prefers-color-scheme: dark){:root{--bg:#0f1420;--card:#171d2b;--t1:#e8ecf4;--t2:#94a3b8;--chip:#232b3d;--chipline:#334155}}`
+    + `.t1{fill:var(--t1)}.t2{fill:var(--t2)}</style>`
+    + `<rect width="100%" height="100%" fill="var(--bg)" rx="10"/>${title}${edges.join('')}${boxes.join('')}${chips.join('')}${legend}</svg>`
   return { source, width: w, height }
 }
 
