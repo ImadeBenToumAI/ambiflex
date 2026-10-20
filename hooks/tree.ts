@@ -307,6 +307,8 @@ export interface RenderOptions {
   compact?: boolean
   /** Nodes per line before a row wraps (default 6): keeps a wide tree readable in a narrow pane. */
   columns?: number
+  /** What a running loop is doing on a node, by node id: replaces the node's meta line with "✻ <activity>". */
+  live?: Record<string, string>
 }
 
 /** Should the pane fold finished leaves by default? Wide trees stay readable that way. */
@@ -404,7 +406,9 @@ export function renderSvg(tree: Tree, selected: string | undefined, opts: Render
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="9" fill="${fill}" stroke="${color}" stroke-width="${strokeW}"${dash}/>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="5" rx="2.5" fill="${color}"/>`
       + `<text x="${p.x + 10}" y="${p.y + 22}" font-size="12" font-weight="600" class="t1" font-family="system-ui,sans-serif">${esc(badge + cut(node.title, 20))}</text>`
-      + `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" class="t2" font-family="system-ui,sans-serif">${esc(cut(meta, 28))}</text>`
+      + (opts.live?.[node.id]
+        ? `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" font-weight="600" fill="#d97706" font-family="system-ui,sans-serif">${esc(cut(`✻ ${opts.live[node.id]}`, 28))}</text>`
+        : `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" class="t2" font-family="system-ui,sans-serif">${esc(cut(meta, 28))}</text>`)
       + (node.agent ? `<circle cx="${p.x + W - 9}" cy="${p.y + 14}" r="4" fill="#ef4444"><animate attributeName="opacity" values="1;0.3;1" dur="1.4s" repeatCount="indefinite"/></circle>` : '')
       + '</g>'
   })

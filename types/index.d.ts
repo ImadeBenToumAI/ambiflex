@@ -48,6 +48,18 @@ export type Cost = {
 
 export type Tree = { version: 1; goal: string; nodes: TreeNode[]; auto: Auto; cost: Cost }
 
+/** What one running loop does right now: the main loop ("main") or a subagent, on the node it serves. */
+export type LiveActivity = {
+  node: string
+  /** Who works: "Claude" for the main loop, the agent's description for a subagent. */
+  who: string
+  phase: 'starting' | 'thinking' | 'tool'
+  /** The tool call under way ("Bash: npm test"), empty while the model thinks. */
+  label: string
+  branch?: string
+  at: string
+}
+
 export type BranchInfo = { commits: string[]; pr?: string }
 
 export type Tab = 'tree' | 'git'
@@ -64,6 +76,8 @@ declare module 'claude-code' {
       git: string
       agents: string[]
       branches: Record<string, BranchInfo>
+      /** Keyed by agent id, or "main" for the main loop. */
+      live: Record<string, LiveActivity>
     }
   }
 }

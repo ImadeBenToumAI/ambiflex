@@ -1,0 +1,26 @@
+name: release
+
+# Pushing a tag vX.Y.Z publishes a GitHub release whose notes are that version's section of CHANGELOG.md,
+# so everyone watching the repository's releases hears about it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="## $version" '$0 == v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          printf '\nUpdate: `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.\n' >> notes.md
+          gh release create "$TAG" --title "Ambiflex $version" --notes-file notes.md
