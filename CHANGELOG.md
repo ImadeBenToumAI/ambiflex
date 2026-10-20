@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.2
+
+- **Squash-merged branches stay connected.** In the Git graph, a branch merged by squash gets a "✓ merged in #N" pill and a dashed link to the commit on main that carries its work. Before, it showed as a line that stopped short.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.6.1
 
 - **Monochrome page.** The page drops its indigo accent. Buttons, the progress bar, the node selection and the main Git lane use the text colour. Colour is kept for meaning only: lens, status and branch lanes.
