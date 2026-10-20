@@ -1,14 +1,16 @@
-// Track n19 "shaped rows": pre-build a row constructor from the header so every row
-// shares one hidden class (monomorphic shape, no spread copies); trim cells only when needed.
+// Track n19 "shaped rows", rewritten without generated code (the original used `new Function`, which
+// security scanners rightly flag): one constructor per header keeps every row on one hidden class.
+// The published 7.38x run used the code-generating version (commit 6b5b1e5); this one benches ~5.8x.
 function needsTrim(s) {
   const n = s.length
   return n > 0 && (s.charCodeAt(0) <= 32 || s.charCodeAt(n - 1) <= 32)
 }
 function buildRow(keys) {
-  // One factory building an object literal with the trimmed header keys in a fixed order:
-  // every row gets the same hidden class, whatever the column count.
-  const body = keys.map((k, j) => `${JSON.stringify(k)}: c[${j}]`).join(', ')
-  return new Function('c', `return { ${body} }`)
+  // One constructor that assigns the trimmed header keys in a fixed order: every row gets the
+  // same hidden class, whatever the column count. No generated code: the keys are data.
+  const n = keys.length
+  function Row(c) { for (let j = 0; j < n; j++) this[keys[j]] = c[j] }
+  return (c) => new Row(c)
 }
 function parse(text) {
   const len = text.length

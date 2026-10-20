@@ -50,6 +50,8 @@ In the desktop app: **+** next to the prompt box → **Plugins** → **Add marke
 
 If Ambiflex helps you, a star on this repository helps other developers find it.
 
+A 104-second film of it at work: [ambiflex-film.mp4](https://github.com/ImadeBenToumAI/ImadeBenToumAI/blob/main/assets/launch/ambiflex-film.mp4).
+
 In this repository, `.claude/settings.json` enables the plugin for every session (cloud or local) opened on the repository.
 
 > Status: Claude Code's "function hooks" plugin API is in early access and may change between releases.

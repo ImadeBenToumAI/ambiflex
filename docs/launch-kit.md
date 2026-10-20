@@ -4,7 +4,7 @@ Everything launch day needs, ready to paste. Drafted by Claude from the session'
 
 ## 1. The launch film (node n10)
 
-**Rendered, voiced, ready to post:** `assets/launch/ambiflex-film.mp4` (1920×1080, 30 fps, 104 s, dark mode, English narration). Subtitles are in `assets/launch/ambiflex-film.srt` for platforms that take a separate file; one still per scene is in `assets/launch/0N-*.png`.
+**Rendered, voiced, ready to post:** the film is kept out of this repository to keep it light; download it from https://github.com/ImadeBenToumAI/ImadeBenToumAI/blob/main/assets/launch/ambiflex-film.mp4 (1920×1080, 30 fps, 104 s, dark mode, English narration). Subtitles are in `assets/launch/ambiflex-film.srt` for platforms that take a separate file; one still per scene is in `assets/launch/0N-*.png`.
 
 Built with [HyperFrames](https://github.com/heygen-com/hyperframes) (HTML compositions rendered frame by frame) in `tools/launch-video/film`. The narration is synthesized locally with Kokoro (open-weights text-to-speech, voice `am_michael`); the lines are in `tools/launch-video/voice.py` and `docs/launch-video-script.md`.
 
