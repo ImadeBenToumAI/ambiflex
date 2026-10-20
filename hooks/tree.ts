@@ -95,6 +95,9 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
     updatedAt: now,
   }
   if (status === 'exploring' && !node.startedAt) node.startedAt = now
+  // A node set straight to review/done without passing through `exploring` still did work: it
+  // started when it was last touched before this change (or when it was created).
+  if ((status === 'review' || FINISHED.includes(status)) && !node.startedAt) node.startedAt = existing?.updatedAt ?? node.createdAt
   if (FINISHED.includes(status) && !node.finishedAt) node.finishedAt = now
   const nodes = existing
     ? tree.nodes.map(one => (one.id === node.id ? node : one))

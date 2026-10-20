@@ -74,6 +74,19 @@ test('picks the next open node whose parents are settled; a goal node never bloc
   expect(nextOpen(t)!.id).toBe('n4')
 })
 
+test('a node set done without exploring takes its last touch as startedAt', () => {
+  const T1 = '2026-10-19T10:00:00.000Z', T2 = '2026-10-19T14:00:00.000Z'
+  let t = upsert(emptyTree(), { title: 'Straight to done', lens: 'step', estimate: '2h' }, T0).tree
+  t = upsert(t, { id: 'n1', summary: 'touched' }, T1).tree
+  t = upsert(t, { id: 'n1', status: 'done', verification: 'tests green' }, T2).tree
+  const n1 = t.nodes.find(n => n.id === 'n1')!
+  expect(n1.startedAt).toBe(T1)
+  expect(n1.finishedAt).toBe(T2)
+  expect(calibration(t)).toEqual({ factor: 2, samples: 1 }) // 4h for a 2h estimate
+  const fresh = upsert(emptyTree(), { title: 'Never touched', status: 'review' }, T1).tree
+  expect(fresh.nodes[0]!.startedAt).toBe(T1) // falls back to createdAt
+})
+
 test('calibrates estimates against actual time', () => {
   let t = sample()
   t = upsert(t, { id: 'n2', status: 'exploring' }, '2026-10-19T10:00:00.000Z').tree

@@ -15,10 +15,16 @@ const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(
   on('ui.status', async () => ({ value: undefined }))
   on('ui.open', async () => ({ value: { isPlaced: false, reason: 'no-surface' } }))
   on('prompt.compose', async () => ({ sections: [] }))
+  on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', async (_$: any, e: any) => ({ text: e.answer }))
 }
 const turn = async ($: any, reason: string) => {
   await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: reason === 'aborted', turnId: 't', reason } as never)
+  await flush()
+}
+// The host runs a queued prompt: the turn it starts carries the prompt's text.
+const start = async ($: any, text: string) => {
+  await $.turn.start({ text, turnId: 't' } as never)
   await flush()
 }
 
@@ -68,25 +74,56 @@ test('auto mode hands the next open node over after each answered turn, then sto
   bottoms(on)
   const prompts: string[] = []
   on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
+  const autoLine = async () => String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result).match(/Auto mode: [^\n]*/)?.[0]
   await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Auto' } as never)
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'A', lens: 'step', estimate: '1h' } as never)
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'B', lens: 'step', parents: ['n1'], estimate: '2h' } as never)
 
-  const started = await $.tool.call({ tool: 'mcp__ambiflex__tree_auto', on: true } as never)
+  const started = await $.tool.call({ tool: 'mcp__ambiflex__tree_auto', on: true, maxTurns: 3 } as never)
   expect(String((started as { result?: unknown }).result)).toContain('ETA end to end: 3h')
   await turn($, 'answer')
   expect(prompts.length).toBe(1)
-  expect(prompts[0]).toContain('n1 "A"')
-
-  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'test green' } as never)
+  expect(prompts[0]).toContain('[tree] Auto mode, turn 1/3. Work on n1 "A"')
+  // Queued, not started: the budget is untouched until the host runs the hand-over.
+  expect(await autoLine()).toContain('turn 0/3')
+  // A host that batches queued prompts: the turn ends again before the hand-over ran, and the
+  // second hand-over is queued for the same node, with the same number, at no cost.
   await turn($, 'answer')
   expect(prompts.length).toBe(2)
-  expect(prompts[1]).toContain('n2 "B"')
+  expect(prompts[1]).toContain('[tree] Auto mode, turn 1/3. Work on n1 "A"')
+  expect(await autoLine()).toContain('turn 0/3')
+
+  await start($, prompts[1])
+  expect(await autoLine()).toContain('turn 1/3')
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'test green' } as never)
+  await turn($, 'answer')
+  expect(prompts.length).toBe(3)
+  expect(prompts[2]).toContain('[tree] Auto mode, turn 2/3. Work on n2 "B"')
+  await start($, prompts[2])
+  expect(await autoLine()).toContain('turn 2/3')
 
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n2', status: 'done', verification: 'test green' } as never)
   await turn($, 'answer')
-  expect(prompts.length).toBe(3)
-  expect(prompts[2]).toContain('Auto mode finished')
+  expect(prompts.length).toBe(4)
+  expect(prompts[3]).toContain('Auto mode finished')
+  await start($, prompts[3])
+  expect(await autoLine()).toBe('Auto mode: off')
+})
+
+test('auto mode refuses to hand over once the started turns reach the budget', async ($, on) => {
+  mock.clock(on)
+  const toasts: string[] = []
+  bottoms(on, toasts)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'A', lens: 'step' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_auto', on: true, maxTurns: 1 } as never)
+  await turn($, 'answer')
+  expect(prompts[0]).toContain('turn 1/1')
+  await start($, prompts[0])
+  await turn($, 'answer')
+  expect(prompts.length).toBe(1)
+  expect(toasts.some(t => t.includes('turn budget (1) spent'))).toBe(true)
   const got = await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)
   expect(String((got as { result?: unknown }).result)).toContain('Auto mode: off')
 })

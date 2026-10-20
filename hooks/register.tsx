@@ -242,6 +242,13 @@ async function handOver($: $, text: string) {
   void $.prompt.submit({ text })
 }
 
+/** Spends one turn of the auto budget: called when a hand-over actually starts a main turn. */
+async function countTurn($: $) {
+  const t = await read($, tree).catch(() => undefined)
+  if (!t?.auto.on) return
+  await commit($, { kind: 'auto', on: true, turns: t.auto.turns + 1 }).catch(() => undefined)
+}
+
 async function kick($: $) {
   const t = await read($, tree)
   if (!t.auto.on) return
@@ -257,10 +264,12 @@ async function kick($: $) {
     await stopAuto($, `turn budget (${t.auto.maxTurns}) spent; raise it with tree_auto or /ambiflex auto <turns>`)
     return
   }
-  await commit($, { kind: 'auto', on: true, turns: t.auto.turns + 1 })
+  // The counter advances when the hand-over starts a turn (turn.start), not here: a host may queue
+  // several hand-overs before running one, and only turns actually worked should spend the budget.
+  const turn = t.auto.turns + 1
   const e = eta(t)
-  $.ui.status(`auto ${t.auto.turns + 1}/${t.auto.maxTurns} · ${target.id} · ETA ${human(e.critical)}`)
-  await handOver($, `[tree] Auto mode, turn ${t.auto.turns + 1}/${t.auto.maxTurns}. Work on ${target.id} "${target.title}" (${LENS_LABEL[target.lens]}${target.estimate ? `, estimate ${target.estimate}` : ''}). `
+  $.ui.status(`auto ${turn}/${t.auto.maxTurns} · ${target.id} · ETA ${human(e.critical)}`)
+  await handOver($, `[tree] Auto mode, turn ${turn}/${t.auto.maxTurns}. Work on ${target.id} "${target.title}" (${LENS_LABEL[target.lens]}${target.estimate ? `, estimate ${target.estimate}` : ''}). `
     + `Set it exploring, do the work, verify it with an external judge, then tree_upsert it done with its verification (or review if nothing can prove it, saying why). Create sub-steps if needed. Stop the turn when this node is settled; I will hand you the next one.`)
 }
 
@@ -603,12 +612,20 @@ export const register: Register = (on, opts) => {
 
   // A queued hand-over that did not start the next main turn was lost by the host: say so once,
   // switch to peer messages, and carry the pending node on this turn so nothing stalls.
+  // A main turn that begins with the plugin's own hand-over is the turn that spends one of the budget:
+  // the counter advances here, once per started turn, whatever number of hand-overs were queued.
   on('turn.start', async ($, e, next) => {
-    if (!pendingKick || e.agentId) return next(e)
+    if (e.agentId) return next(e)
+    if (e.text.startsWith('[tree] Auto mode')) {
+      pendingKick = undefined
+      await countTurn($)
+      return next(e)
+    }
+    if (!pendingKick) return next(e)
     const text = pendingKick
-    if (e.text.startsWith('[tree] Auto mode')) { pendingKick = undefined; return next(e) }
     pendingKick = undefined
     if (!handOverLost) { handOverLost = true; $.ui.toast('Ambiflex: this host does not run plugin-submitted prompts; hand-overs now ride your next turn.') }
+    await countTurn($)
     return next({ ...e, text: `${text}\n\n${e.text}` })
   })
 
