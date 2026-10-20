@@ -60,6 +60,9 @@ export type LiveActivity = {
   at: string
 }
 
+/** One commit for the page's Git graph: hash, parent hashes, refs ("HEAD -> main", "origin/x", "tag: v1"), subject, author, ISO date. */
+export type GitCommit = { h: string; p: string[]; refs: string[]; s: string; a: string; t: string }
+
 export type BranchInfo = { commits: string[]; pr?: string }
 
 export type Tab = 'tree' | 'git'

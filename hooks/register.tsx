@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 
-import type { BranchInfo, Cost, LiveActivity, Status, Tab, Tree } from '../types'
+import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree } from '../types'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
 import type { Event } from './log'
@@ -22,8 +22,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = () => `${root}.ambiflex/live.json`
 const SEEN = () => `${root}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.5.0'
-export const WHATS_NEW = 'live activity on the page: a spinner and what each loop is doing on its node, one fork per subagent. Run /ambiflex page to republish the page.'
+export const VERSION = '0.6.0'
+export const WHATS_NEW = 'a new look for the page, a visual Git graph (branches, merges, main), and live activity on each node. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -147,8 +147,28 @@ async function refreshGit($: $) {
   const text = graph && graph.exitCode === 0
     ? `${branches?.stdout ?? ''}\n${graph.stdout}`
     : 'No Git repository in this folder.'
+  const before = await read($, git)
   await update($, git, () => text)
+  if (text !== before) await pushGit($, text).catch(() => undefined)
   await refreshBranches($).catch(() => undefined)
+}
+
+/** The page's Git tab: the last commits of every branch, with their parents and refs, drawn as a lane graph. */
+export function parseCommits(out: string): GitCommit[] {
+  return out.split('\x1e').map(r => r.replace(/^\n/, '')).filter(Boolean).map(r => {
+    const [h, p, d, s, a, t] = r.split('\x1f')
+    return { h, p: p ? p.split(' ') : [], refs: d ? d.split(', ').filter(Boolean) : [], s: s ?? '', a: a ?? '', t: t ?? '' }
+  })
+}
+
+async function pushGit($: $, text: string) {
+  const log = await $.process
+    .run(['git', 'log', '--all', '--topo-order', '-n', '120', '--pretty=format:%H%x1f%P%x1f%D%x1f%s%x1f%an%x1f%cI%x1e'])
+    .catch(() => undefined)
+  const commits = log && log.exitCode === 0 ? parseCommits(log.stdout) : []
+  const doc = { at: await nowIso($), text, commits }
+  await $.fs.write(`${root}.ambiflex/git.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await pushDoc($, 'git', doc)
 }
 
 /** For every node that names a branch: its commits beyond main, and its PR when `gh` can tell. */
@@ -178,7 +198,7 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
   const made = await $.process.run(args).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${root}.ambiflex/.gitignore`, 'worktrees/\nlive.json\n.seen-version\n').catch(() => undefined)
+  await $.fs.write(`${root}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\n.seen-version\n').catch(() => undefined)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -195,7 +215,6 @@ async function openPane($: $) {
 // "live/current" doc at most every LIVE_EVERY ms (always on a start or an end). A refused push turns it off.
 const LIVE_EVERY = 2000
 let livePushedAt = 0
-let liveVersion: number | undefined
 let liveOff = false
 let pushing = false
 
@@ -241,21 +260,29 @@ async function pushLive($: $, force = false) {
     const map = await read($, live)
     const doc = { at: new Date(now).toISOString(), agents: Object.entries(map).map(([id, a]) => ({ id, ...a })) }
     await $.fs.write(LIVE(), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
-    const url = liveOff ? undefined : await artifactUrl($)
-    if (!url) return
-    const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection: 'live', doc_id: 'current', data: doc, ...(liveVersion ? { if_version: liveVersion } : {}) } as never)
-    let r = await set().catch(() => undefined)
-    if (!r || /conflict|changed since|refused|current version|not found|error/i.test(JSON.stringify(r))) {
-      // An unknown or stale version: read the doc's current one once, then try again.
-      const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection: 'live', doc_id: 'current' } as never).catch(() => undefined)
-      liveVersion = versionIn(got)
-      r = await set().catch(() => undefined)
-      if (!r || /conflict|changed since|refused|current version|error/i.test(JSON.stringify(r))) { liveOff = true; return }
-    }
-    liveVersion = versionIn(r) ?? liveVersion
+    await pushDoc($, 'live', doc)
   } finally {
     pushing = false
   }
+}
+
+const docVersions: Record<string, number | undefined> = {}
+const failed = (r: unknown) => !r || /conflict|changed since|refused|current version|error/i.test(JSON.stringify(r))
+
+/** Writes one doc of the page's store ("<collection>/current"), pinned to the version last seen. */
+async function pushDoc($: $, collection: string, data: Record<string, unknown>) {
+  const url = liveOff ? undefined : await artifactUrl($)
+  if (!url) return
+  const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection, doc_id: 'current', data, ...(docVersions[collection] ? { if_version: docVersions[collection] } : {}) } as never)
+  let r = await set().catch(() => undefined)
+  if (failed(r)) {
+    // An unknown or stale version: read the doc's current one once, then try again.
+    const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection, doc_id: 'current' } as never).catch(() => undefined)
+    docVersions[collection] = versionIn(got)
+    r = await set().catch(() => undefined)
+    if (failed(r)) { liveOff = true; return }
+  }
+  docVersions[collection] = versionIn(r) ?? docVersions[collection]
 }
 
 /** The node the main loop works on: the latest exploring node no subagent holds. */

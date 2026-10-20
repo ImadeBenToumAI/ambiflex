@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW } from '../hooks/register'
+import { VERSION, WHATS_NEW, parseCommits } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -275,3 +275,11 @@ test('after an update the plugin says once what changed; a first install says no
   expect(toasts.filter(t => t.startsWith('Ambiflex ')).length).toBe(1)
 })
 
+
+test('the Git graph reads commits with their parents and refs', () => {
+  const out = 'a1\x1fb2 c3\x1fHEAD -> main, origin/main, tag: v1\x1fMerge branch x\x1fAda\x1f2026-10-20T10:00:00Z\x1e\nb2\x1f\x1f\x1fInit\x1fAda\x1f2026-10-19T10:00:00Z\x1e'
+  const [merge, root] = parseCommits(out)
+  expect(merge).toEqual({ h: 'a1', p: ['b2', 'c3'], refs: ['HEAD -> main', 'origin/main', 'tag: v1'], s: 'Merge branch x', a: 'Ada', t: '2026-10-20T10:00:00Z' })
+  expect(root.p).toEqual([])
+  expect(root.refs).toEqual([])
+})

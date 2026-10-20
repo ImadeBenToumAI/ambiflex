@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.0
+
+- **New look for the interactive page.** The page has a calm, dense product style: Inter, hairline borders, one indigo accent and the Ambiflex mark. Each node shows a status ring: dashed when proposed, half-filled when exploring, three quarters in review, a check when done.
+- **Visual Git graph.** The Git tab draws the history as lanes. Main runs down the first lane, and each branch forks and merges back in its own colour. Refs appear as pills, and a branch serving a tree node carries that node's chip. The plugin pushes the history to the page after each git command.
+- Run `/ambiflex page` once to republish your page with the new version.
+
 ## 0.5.0
 
 - **Live activity on the page.** While Claude or a subagent works on a node, the node shows a pulsing halo and Claude Code's ✻ spinner. It also shows what the loop is doing right now: a verb while it thinks (*Pondering…*, *Nudging…*) or the tool call under way (`Bash: npm test`).
