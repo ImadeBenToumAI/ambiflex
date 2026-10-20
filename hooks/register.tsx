@@ -22,8 +22,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = () => `${root}.ambiflex/live.json`
 const SEEN = () => `${root}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.0'
-export const WHATS_NEW = 'a new look for the page, a visual Git graph (branches, merges, main), and live activity on each node. Run /ambiflex page to republish the page.'
+export const VERSION = '0.6.1'
+export const WHATS_NEW = 'a monochrome look and mark for the page, and the List and Git tabs scroll again. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

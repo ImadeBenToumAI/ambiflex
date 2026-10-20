@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.1
+
+- **Monochrome page.** The page drops its indigo accent. Buttons, the progress bar, the node selection and the main Git lane use the text colour. Colour is kept for meaning only: lens, status and branch lanes.
+- **New mark.** The Ambiflex mark is a black or white square with the tree cut out.
+- **Scrolling fixed.** The List and Git tabs scroll again, on mobile and desktop.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.6.0
 
 - **New look for the interactive page.** The page has a calm, dense product style: Inter, hairline borders, one indigo accent and the Ambiflex mark. Each node shows a status ring: dashed when proposed, half-filled when exploring, three quarters in review, a check when done.
