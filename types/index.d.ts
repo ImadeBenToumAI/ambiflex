@@ -42,6 +42,8 @@ export type TreeNode = {
   /** A model and effort pinned for this node (model routing keeps them): an alias (haiku, sonnet, opus, fable) and low…max. */
   model?: string
   effort?: string
+  /** What a light model judged this node to be, for routing: mechanical, standard or risky. */
+  kind?: 'mechanical' | 'standard' | 'risky'
   /** Each attempt at reaching the acceptance criterion, oldest first. */
   iterations?: Iteration[]
   startedAt?: string

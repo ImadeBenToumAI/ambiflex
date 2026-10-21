@@ -43,10 +43,10 @@ export function route(n: TreeNode, cap: number): Route {
   let tier: number, effort: Effort, why: string
   if (n.lens !== 'step') { tier = 2; effort = 'high'; why = `${n.lens} track: reasoning` }
   else if (weight >= 4) { tier = 2; effort = 'high'; why = `importance ${weight}` }
-  else if (MECHANICAL.test(text) && weight <= 2) { tier = 0; effort = 'low'; why = 'mechanical step' }
+  else if ((n.kind ? n.kind === 'mechanical' : MECHANICAL.test(text)) && weight <= 2) { tier = 0; effort = 'low'; why = 'mechanical step' }
   else if (weight === 3) { tier = 1; effort = 'medium'; why = 'standard step' }
   else { tier = 1; effort = 'low'; why = 'minor step' }
-  if (weight >= 5 || RISKY.test(text)) {
+  if (weight >= 5 || n.kind === 'risky' || RISKY.test(text)) {
     if (tier < 2) { tier = 2; effort = 'high' }
     why = weight >= 5 ? 'critical: never below the strong tier' : 'risky (security, data, production): never below the strong tier'
   }
@@ -67,4 +67,19 @@ export function routes(t: Tree, cap: number): Record<string, Route> {
   const out: Record<string, Route> = {}
   for (const n of t.nodes) if (n.lens !== 'goal' && !['done', 'validated', 'merged', 'abandoned', 'moved'].includes(n.status)) out[n.id] = route(n, cap)
   return out
+}
+
+/** The question a light model answers to sort a node, and how its one-word answer is read. */
+export function kindPrompt(n: TreeNode): string {
+  return `Classify this task for choosing a model. Answer with one word: mechanical (renaming, formatting, docs, copying, running a known command), risky (security, auth, secrets, data loss, migrations, production, payments), or standard (anything else).\n\nTask: ${n.title}\n${n.summary ?? ''}\n${(n.detail ?? '').slice(0, 1500)}`
+}
+export function parseKind(text: string | undefined): TreeNode['kind'] | undefined {
+  const m = (text ?? '').toLowerCase().match(/\b(mechanical|standard|risky)\b/)
+  return m ? (m[1] as TreeNode['kind']) : undefined
+}
+
+/** The status line: what is left of the week, the node in hand, the model it runs on. */
+export function statusLine(p: { weekLeft?: number; node?: string; route?: Route; auto?: string }): string | undefined {
+  const parts = [p.auto, p.weekLeft !== undefined ? `${Math.round(p.weekLeft)}% week left` : undefined, p.node, p.route ? `${p.route.model} ${p.route.effort}` : undefined].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
 }

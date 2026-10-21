@@ -2,6 +2,14 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.12.1
+
+Savings.
+
+- **A light model sorts each step.** With routing on, Haiku (low effort) classifies a new or edited step once as mechanical, standard or risky. Routing uses that instead of keywords alone; risky only ever moves a node up.
+- **Compaction keeps the tree.** Past 70% of the context (the new **Compact at** setting; 0 turns it off), the conversation is compacted between turns. The summary keeps the goal, the open nodes, the proofs and the decisions, and drops logs and dead ends. A shorter context makes every request cheaper.
+- **Status line.** It shows `auto 3/40 · 38% week left · n4 Parser · sonnet low`, always in view.
+
 ## 0.12.0
 
 Model routing, so your week goes where it matters. New **Model routing** setting: `off` (the default), `suggest` or `auto`.

@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -36,6 +36,12 @@
       "description": "Your own $/hour figure for cost projections (0 = measure it from this session, assumed before the first minutes).",
       "default": 0,
       "title": "Hourly rate (USD)"
+    },
+    "compactAtPct": {
+      "type": "number",
+      "description": "Compact the conversation between turns once the context passes this percent (0 = never). The summary keeps the goal, the open nodes and their proofs; a shorter context makes every request cheaper.",
+      "default": 70,
+      "title": "Compact at (% of context)"
     },
     "routing": {
       "type": "string",

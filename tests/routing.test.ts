@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { planRoute, route, tierOf } from '../hooks/routing'
+import { parseKind, planRoute, route, statusLine, tierOf } from '../hooks/routing'
 import type { TreeNode } from '../types'
 
 const node = (o: Partial<TreeNode>): TreeNode => ({ id: 'n1', title: 'Step', lens: 'step', status: 'exploring', parents: [], createdAt: '', updatedAt: '', ...o })
@@ -23,4 +23,14 @@ test('routing: the plan on the strongest allowed model; each node on what it nee
   expect(route(node({ title: 'Depth', lens: 'depth' }), 1).model).toBe('sonnet')
   // A pin wins.
   expect(route(node({ title: 'Rename', model: 'opus', effort: 'xhigh' }), 3)).toMatchObject({ model: 'opus', effort: 'xhigh', why: 'pinned' })
+})
+
+test('routing: a light model\'s word sorts a step; the status line says the week, the node and the route', () => {
+  expect(parseKind('Mechanical.')).toBe('mechanical')
+  expect(parseKind('I think: risky')).toBe('risky')
+  expect(parseKind('???')).toBeUndefined()
+  expect(route(node({ title: 'Write the parser', weight: 1, kind: 'mechanical' }), 3).model).toBe('haiku')
+  expect(route(node({ title: 'Tidy the module', weight: 1, kind: 'risky' }), 3).model).toBe('opus')
+  expect(statusLine({ weekLeft: 38.4, node: 'n4 Parser', route: { model: 'sonnet', effort: 'low', why: '' } })).toBe('38% week left · n4 Parser · sonnet low')
+  expect(statusLine({})).toBeUndefined()
 })

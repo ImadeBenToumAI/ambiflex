@@ -5,7 +5,7 @@ import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, Tree
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
 import { buildUsage, parseSamples } from './usage'
-import { MODEL_IDS, planRoute, route, routes, tierOf } from './routing'
+import { MODEL_IDS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
 import type { SkillFiles } from './skills'
@@ -29,6 +29,7 @@ type Ctx = {
   pendingKick?: string; handOverLost: boolean
   usdAtStart: number; startedAt: number; warnedBudget: boolean
   /** The model of the last request, for the usage readings. */
+  compactDue?: boolean
   lastModel?: string
 }
 const sessions = new Map<string, Ctx>()
@@ -56,8 +57,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.12.0'
-export const WHATS_NEW = 'model routing (off by default; set Model routing to suggest or auto): the plan runs on the strongest model at full effort, each node on the model and effort it needs; critical and risky nodes never go below the strong tier, a failed proof moves the next attempt up, a pinned node keeps its model, nothing goes above your top model. The page shows each node route and the week by model. Run /ambiflex page to republish the page.'
+export const VERSION = '0.12.1'
+export const WHATS_NEW = 'savings: a light model (Haiku, low effort) sorts each step as mechanical, standard or risky for routing; the conversation is compacted between turns past 70% of the context, keeping the goal, the open nodes and their proofs; the status line shows the week left, the node in hand and its model.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -834,6 +835,7 @@ async function drawTree($: $, e: ResolveInput) {
 }
 
 type Options = {
+  compactAtPct: number
   routing: 'off' | 'suggest' | 'auto'
   topModel: string
   planUsd: number
@@ -845,7 +847,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { routing: 'off', topModel: '', planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -877,6 +879,11 @@ async function trackCost($: $): Promise<Cost> {
     }
   }
   await sampleUsage($, usage, t, sessionUsd, cost.estimateUsd).catch(() => undefined)
+  const week = usage?.rateLimits?.find(r => r.kind === 'seven_day')
+  await refreshStatus($, week ? Math.max(0, 100 - week.percentUsed) : undefined).catch(() => undefined)
+  // A long context makes every request dearer: compact between turns once it passes the threshold.
+  const pct = usage?.context?.percent
+  if (options.compactAtPct > 0 && pct !== undefined && pct >= options.compactAtPct) c.compactDue = true
   for (const r of rateLimits) {
     if (r.percentUsed >= options.rateLimitAlertPct && !warnedLimits.has(r.kind)) {
       warnedLimits.add(r.kind)
@@ -910,6 +917,26 @@ async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']
   if (t.auto.on && doc.hitsAt && doc.week?.resetsAt) {
     await stopAuto($, `the weekly usage window would reach 100% at ${doc.hitsAt}, before it resets at ${doc.week.resetsAt}`)
   }
+}
+
+// A light model sorts each step (mechanical, standard, risky) once, so routing does not lean on keywords alone
+// and the sorting itself never costs a strong model's turn.
+async function classify($: $, id: string) {
+  const n = (await read($, tree)).nodes.find(x => x.id === id)
+  if (!n) return
+  const r = await $.model.complete({ model: 'haiku', prompt: kindPrompt(n), maxTokens: 8, effort: 'low' })
+  const kind = r.isAnswered ? parseKind(r.text) : undefined
+  if (kind && kind !== n.kind) await commit($, { kind: 'upsert', input: { id, kind } as never })
+}
+
+// The status line: the week left, the node in hand and its route, always in view.
+async function refreshStatus($: $, weekLeft?: number) {
+  const t = await read($, tree)
+  const id = mainNode(t)
+  const n = id ? t.nodes.find(x => x.id === id) : undefined
+  const r = options.routing !== 'off' ? (n ? route(n, await routingCap($)) : undefined) : undefined
+  const auto = t.auto.on ? `auto ${t.auto.turns}/${t.auto.maxTurns}` : undefined
+  $.ui.status(statusLine({ auto, weekLeft, node: n ? `${n.id} ${n.title.slice(0, 24)}` : undefined, route: r }))
 }
 
 // Model routing: the cap is the top model setting, else the session's own model; nothing is routed above it.
@@ -1089,6 +1116,12 @@ ${outline(await read($, tree))}` }
       return ran
     }
     await trackCost($).catch(() => undefined)
+    const c = await ctx($)
+    if (c.compactDue) {
+      c.compactDue = false
+      // Between turns, with the tree-keeping instructions of the session.compact hook.
+      await $.session.compact({ trigger: 'plugin' } as never).catch(() => undefined)
+    }
     const t = await read($, tree).catch(() => undefined)
     if (t?.auto.on) {
       if (e.reason === 'answer') await kick($).catch(() => undefined)
@@ -1127,6 +1160,7 @@ ${outline(await read($, tree))}` }
     const stored = await storedNode($, id)
     const lost = stored ? (['status', 'score', 'weight', 'seq', 'title'] as const).filter(k => input[k] !== undefined && JSON.stringify(stored[k]) !== JSON.stringify(node[k])) : ['the whole node']
     if (lost.length) return { result: `ERROR: ${id} was not stored as given (${lost.join(', ')} differ on disk). Run tree_get and retry.` }
+    if (options.routing !== 'off' && node.lens === 'step' && !node.model && (isNew || input.title !== undefined || input.detail !== undefined)) classify($, id).catch(() => undefined)
     return { result: `${id} stored: ${echo(node)}${notes.length ? `. Note: ${notes.join('; ')}.` : ''}` }
   })
 
@@ -1249,6 +1283,15 @@ ${outline(await read($, tree))}` }
       // Tracking must never block the agent.
     }
     return started
+  })
+
+  // Compaction keeps what the work needs: the goal, the open nodes, their proofs and what is left.
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId) return next(e)
+    const t = await read($, tree).catch(() => undefined)
+    if (!t?.goal) return next(e)
+    const keep = `Keep, word for word where it matters: the Ambiflex goal "${t.goal}", every open node (id, title, status, what is left), every verification and score, the decisions taken and why, and the files changed. Drop tool output, logs and exploration that led nowhere: the tree holds the rest (tree_get).`
+    return next({ ...e, instructions: e.instructions ? `${e.instructions}\n\n${keep}` : keep })
   })
 
   // Each model request is a loop thinking; each tool call is what it does.
