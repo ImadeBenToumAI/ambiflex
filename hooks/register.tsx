@@ -13,17 +13,42 @@ import {
 const PLUGIN = 'ambiflex'
 const PANE = 'ambiflex'
 // Paths are anchored at the session's project root: a shell `cd` must never move the tree.
-let root = ''
-const FILE = () => `${root}.ambiflex/tree.json`
-const LOG = () => `${root}${LOG_FILE}`
-const ATTRS = () => `${root}.ambiflex/.gitattributes`
+// Everything that belongs to one session lives here, keyed by the session's id. One hooks worker can
+// serve several sessions at once (two projects open side by side in the desktop app): a module variable
+// such as the project root would then be shared, and one session would read and write another's tree.
+type Ctx = {
+  root?: string; sid: string
+  livePushedAt: number; liveOff: boolean; pushing: boolean
+  pendingKick?: string; handOverLost: boolean
+  usdAtStart: number; startedAt: number; warnedBudget: boolean
+}
+const sessions = new Map<string, Ctx>()
+async function ctx($: $): Promise<Ctx> {
+  const id = await $.session.id().catch(() => 'local')
+  let c = sessions.get(id)
+  if (!c) {
+    c = { sid: id.slice(-6), livePushedAt: 0, liveOff: false, pushing: false, handOverLost: false, usdAtStart: 0, startedAt: 0, warnedBudget: false }
+    sessions.set(id, c)
+  }
+  if (c.root === undefined) c.root = await resolveRoot($)
+  return c
+}
+const rootOf = async ($: $) => (await ctx($)).root ?? ''
+/** Runs git (or gh) in the session's own project, whatever folder the host would default to. */
+async function inRoot($: $, timeoutMs?: number) {
+  const r = (await rootOf($)).replace(/\/$/, '')
+  return { ...(r ? { cwd: r } : {}), ...(timeoutMs ? { timeoutMs } : {}) }
+}
+const FILE = async ($: $) => `${await rootOf($)}.ambiflex/tree.json`
+const LOG = async ($: $) => `${await rootOf($)}${LOG_FILE}`
+const ATTRS = async ($: $) => `${await rootOf($)}.ambiflex/.gitattributes`
 const ARTIFACT_FILE = '.ambiflex/artifact.json'
 const PAGE_FILE = '.ambiflex/page.html'
-const LIVE = () => `${root}.ambiflex/live.json`
-const SEEN = () => `${root}.ambiflex/.seen-version`
+const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
+const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.6'
-export const WHATS_NEW = 'a session opened above the repository (several repositories side by side) now finds the project tree instead of starting an empty one.'
+export const VERSION = '0.6.7'
+export const WHATS_NEW = 'sessions are isolated: two projects open at once no longer share their tree, Git view or page. Run /ambiflex page to resync this project\'s page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -70,7 +95,6 @@ const NODE_SCHEMA = {
 
 type $ = EngineInterface
 
-let sessionId = 'local'
 
 /**
  * The tree lives in the repository as an append-only event log (merged by Git without
@@ -94,43 +118,43 @@ async function resolveRoot($: $): Promise<string> {
 }
 
 async function load($: $) {
-  sessionId = (await $.session.id().catch(() => 'local')).slice(-6)
-  root = await resolveRoot($)
-  const hasLog = await $.fs.exists(LOG()).catch(() => false)
+  const c = await ctx($)
+  c.root = await resolveRoot($)
+  const hasLog = await $.fs.exists((await LOG($))).catch(() => false)
   if (hasLog) {
-    const text = await $.fs.read(LOG()).catch(() => undefined)
+    const text = await $.fs.read((await LOG($))).catch(() => undefined)
     const replayed = replay(parseLog(typeof text === 'string' ? text : undefined))
     // Cost is not logged: carry it over from the snapshot.
-    const snap = await $.fs.exists(FILE()).catch(() => false) ? parseTree(await $.fs.read(FILE()).catch(() => undefined) as string | undefined) : undefined
+    const snap = await $.fs.exists((await FILE($))).catch(() => false) ? parseTree(await $.fs.read((await FILE($))).catch(() => undefined) as string | undefined) : undefined
     await update($, tree, () => ({ ...replayed, cost: snap?.cost ?? replayed.cost }))
     return
   }
-  const exists = await $.fs.exists(FILE()).catch(() => false)
-  const text = exists ? await $.fs.read(FILE()).catch(() => undefined) : undefined
+  const exists = await $.fs.exists((await FILE($))).catch(() => false)
+  const text = exists ? await $.fs.read((await FILE($))).catch(() => undefined) : undefined
   const parsed = parseTree(typeof text === 'string' ? text : undefined)
   await update($, tree, () => parsed)
   if (parsed.nodes.length || parsed.goal) {
     // One-time migration of a whole-file tree.json into the log.
-    await $.fs.write(LOG(), serialize(eventsFromSnapshot(parsed, sessionId))).catch(() => undefined)
-    await $.fs.write(ATTRS(), 'log.jsonl merge=union\n').catch(() => undefined)
+    await $.fs.write((await LOG($)), serialize(eventsFromSnapshot(parsed, (await ctx($)).sid))).catch(() => undefined)
+    await $.fs.write((await ATTRS($)), 'log.jsonl merge=union\n').catch(() => undefined)
   }
 }
 
 /** Writes the snapshot only (cost, agents): nothing a replay needs. */
 async function save($: $, next: Tree) {
   await update($, tree, () => next)
-  await $.fs.write(FILE(), `${JSON.stringify(next, null, 2)}\n`)
+  await $.fs.write((await FILE($)), `${JSON.stringify(next, null, 2)}\n`)
 }
 
 /** Applies one event to the live tree, appends it to the log, and refreshes the snapshot. */
 async function commit($: $, event: Omit<Event, 't' | 's'>): Promise<Tree> {
   const t = await read($, tree)
-  const full = { ...event, t: await nowIso($), s: sessionId } as Event
+  const full = { ...event, t: await nowIso($), s: (await ctx($)).sid } as Event
   const applied = applyOn(t, full)
-  const had = await $.fs.exists(LOG()).catch(() => false)
-  const prior = had ? (await $.fs.read(LOG()).catch(() => '')) as string : ''
-  await $.fs.write(LOG(), `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${JSON.stringify(full)}\n`)
-  if (!had) await $.fs.write(ATTRS(), 'log.jsonl merge=union\n').catch(() => undefined)
+  const had = await $.fs.exists((await LOG($))).catch(() => false)
+  const prior = had ? (await $.fs.read((await LOG($))).catch(() => '')) as string : ''
+  await $.fs.write((await LOG($)), `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${JSON.stringify(full)}\n`)
+  if (!had) await $.fs.write((await ATTRS($)), 'log.jsonl merge=union\n').catch(() => undefined)
   await save($, applied)
   return applied
 }
@@ -155,10 +179,10 @@ function applyOn(t: Tree, e: Event): Tree {
 
 async function refreshGit($: $) {
   const graph = await $.process
-    .run(['git', 'log', '--graph', '--oneline', '--decorate', '--all', '-n', '40'])
+    .run(['git', 'log', '--graph', '--oneline', '--decorate', '--all', '-n', '40'], await inRoot($))
     .catch(() => undefined)
   const branches = await $.process
-    .run(['git', 'branch', '-a', '-vv', '--sort=-committerdate'])
+    .run(['git', 'branch', '-a', '-vv', '--sort=-committerdate'], await inRoot($))
     .catch(() => undefined)
   const text = graph && graph.exitCode === 0
     ? `${branches?.stdout ?? ''}\n${graph.stdout}`
@@ -179,11 +203,11 @@ export function parseCommits(out: string): GitCommit[] {
 
 async function pushGit($: $, text: string) {
   const log = await $.process
-    .run(['git', 'log', '--all', '--topo-order', '-n', '120', '--pretty=format:%H%x1f%P%x1f%D%x1f%s%x1f%an%x1f%cI%x1e'])
+    .run(['git', 'log', '--all', '--topo-order', '-n', '120', '--pretty=format:%H%x1f%P%x1f%D%x1f%s%x1f%an%x1f%cI%x1e'], await inRoot($))
     .catch(() => undefined)
   const commits = log && log.exitCode === 0 ? parseCommits(log.stdout) : []
   const doc = { at: await nowIso($), text, commits }
-  await $.fs.write(`${root}.ambiflex/git.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await $.fs.write(`${await rootOf($)}.ambiflex/git.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
   await pushDoc($, 'git', doc)
 }
 
@@ -192,9 +216,9 @@ async function refreshBranches($: $) {
   const t = await read($, tree)
   const info: Record<string, BranchInfo> = {}
   for (const n of t.nodes.filter(n => n.branch)) {
-    const log = await $.process.run(['git', 'log', `main..${n.branch}`, '--oneline', '-n', '8']).catch(() => undefined)
+    const log = await $.process.run(['git', 'log', `main..${n.branch}`, '--oneline', '-n', '8'], await inRoot($)).catch(() => undefined)
     const commits = log && log.exitCode === 0 ? log.stdout.split('\n').filter(Boolean) : []
-    const pr = await $.process.run(['gh', 'pr', 'list', '--head', n.branch!, '--json', 'url', '--jq', '.[0].url'], { timeoutMs: 10000 }).catch(() => undefined)
+    const pr = await $.process.run(['gh', 'pr', 'list', '--head', n.branch!, '--json', 'url', '--jq', '.[0].url'], await inRoot($, 10000)).catch(() => undefined)
     info[n.id] = { commits, pr: pr && pr.exitCode === 0 && pr.stdout.trim() ? pr.stdout.trim() : undefined }
   }
   await update($, branches, () => info)
@@ -208,13 +232,13 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const node = t.nodes.find(n => n.id === id)
   if (!node) return undefined
   const branch = node.branch ?? `ambiflex/${id}-${slug(node.title) || 'work'}`
-  const path = `${root}.ambiflex/worktrees/${id}`
+  const path = `${await rootOf($)}.ambiflex/worktrees/${id}`
   if (await $.fs.exists(path).catch(() => false)) return { branch, path }
-  const exists = await $.process.run(['git', 'rev-parse', '--verify', '--quiet', branch]).catch(() => undefined)
+  const exists = await $.process.run(['git', 'rev-parse', '--verify', '--quiet', branch], await inRoot($)).catch(() => undefined)
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
-  const made = await $.process.run(args).catch(() => undefined)
+  const made = await $.process.run(args, await inRoot($)).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${root}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\n.seen-version\n').catch(() => undefined)
+  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\n.seen-version\n').catch(() => undefined)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -230,9 +254,6 @@ async function openPane($: $) {
 // Live activity: what each loop is doing, written to .ambiflex/live.json and pushed to the page's
 // "live/current" doc at most every LIVE_EVERY ms (always on a start or an end). A refused push turns it off.
 const LIVE_EVERY = 2000
-let livePushedAt = 0
-let liveOff = false
-let pushing = false
 
 /** "Bash: npm test", "Edit: src/a.ts": the tool and its most telling argument. */
 export function toolLabel(e: { tool: string } & Record<string, unknown>): string {
@@ -243,7 +264,7 @@ export function toolLabel(e: { tool: string } & Record<string, unknown>): string
 }
 
 async function artifactUrl($: $): Promise<string | undefined> {
-  const raw = await $.fs.read(`${root}${ARTIFACT_FILE}`).catch(() => '') as string
+  const raw = await $.fs.read(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => '') as string
   try { return (JSON.parse(raw) as { url?: string }).url || undefined } catch { return undefined }
 }
 
@@ -269,16 +290,17 @@ const versionIn = (r: unknown) => { const m = JSON.stringify(r ?? '').match(/ver
 
 async function pushLive($: $, force = false) {
   const now = await $.clock.now()
-  if (pushing || (!force && now - livePushedAt < LIVE_EVERY)) return
-  livePushedAt = now
-  pushing = true
+  const c = await ctx($)
+  if (c.pushing || (!force && now - c.livePushedAt < LIVE_EVERY)) return
+  c.livePushedAt = now
+  c.pushing = true
   try {
     const map = await read($, live)
     const doc = { at: new Date(now).toISOString(), agents: Object.entries(map).map(([id, a]) => ({ id, ...a })) }
-    await $.fs.write(LIVE(), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
+    await $.fs.write((await LIVE($)), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
     await pushDoc($, 'live', doc)
   } finally {
-    pushing = false
+    c.pushing = false
   }
 }
 
@@ -287,18 +309,19 @@ const failed = (r: unknown) => !r || /conflict|changed since|refused|current ver
 
 /** Writes one doc of the page's store ("<collection>/current"), pinned to the version last seen. */
 async function pushDoc($: $, collection: string, data: Record<string, unknown>) {
-  const url = liveOff ? undefined : await artifactUrl($)
+  const c = await ctx($)
+  const url = c.liveOff ? undefined : await artifactUrl($)
   if (!url) return
-  const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection, doc_id: 'current', data, ...(docVersions[collection] ? { if_version: docVersions[collection] } : {}) } as never)
+  const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection, doc_id: 'current', data, ...(docVersions[`${url}#${collection}`] ? { if_version: docVersions[`${url}#${collection}`] } : {}) } as never)
   let r = await set().catch(() => undefined)
   if (failed(r)) {
     // An unknown or stale version: read the doc's current one once, then try again.
     const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection, doc_id: 'current' } as never).catch(() => undefined)
-    docVersions[collection] = versionIn(got)
+    docVersions[`${url}#${collection}`] = versionIn(got)
     r = await set().catch(() => undefined)
-    if (failed(r)) { liveOff = true; return }
+    if (failed(r)) { c.liveOff = true; return }
   }
-  docVersions[collection] = versionIn(r) ?? docVersions[collection]
+  docVersions[`${url}#${collection}`] = versionIn(r) ?? docVersions[`${url}#${collection}`]
 }
 
 /** The node the main loop works on: the latest exploring node no subagent holds. */
@@ -319,10 +342,10 @@ async function noteActivity($: $, agentId: string | undefined, patch: Pick<LiveA
 
 /** After an update, says once per project what changed. A first install (no tree yet) says nothing. */
 async function whatsNew($: $) {
-  const seen = ((await $.fs.read(SEEN()).catch(() => '')) as string).trim()
+  const seen = ((await $.fs.read((await SEEN($))).catch(() => '')) as string).trim()
   if (seen === VERSION) return
   const t = await read($, tree)
-  await $.fs.write(SEEN(), `${VERSION}\n`)
+  await $.fs.write((await SEEN($)), `${VERSION}\n`)
   if (!seen && t.nodes.length === 0) return
   $.ui.toast(`Ambiflex ${VERSION}: ${WHATS_NEW}`)
 }
@@ -346,7 +369,7 @@ async function startAuto($: $, maxTurns?: number, kickNow = false) {
   const t0 = await read($, tree)
   await save($, { ...t0, cost: { ...t0.cost, spentUsd: 0 } })
   const next = await commit($, { kind: 'auto', on: true, maxTurns: maxTurns ?? t0.auto.maxTurns })
-  warnedBudget = false
+  ;(await ctx($)).warnedBudget = false
   const cost = await trackCost($).catch(() => next.cost)
   const e = eta(next)
   const c = calibration(next)
@@ -371,14 +394,13 @@ async function stopAuto($: $, reason: string) {
 }
 
 /** The hand-over prompt the plugin queued last, until a turn shows it arrived. */
-let pendingKick: string | undefined
 /** True once a queued hand-over never started a turn (some hosts do not run plugin-submitted prompts). */
-let handOverLost = false
 
 /** Submits a hand-over prompt; on a host that lost one before, sends it to the session as a peer message instead. */
 async function handOver($: $, text: string) {
-  pendingKick = text
-  if (handOverLost) {
+  const c = await ctx($)
+  c.pendingKick = text
+  if (c.handOverLost) {
     const sessionId = await $.session.id().catch(() => undefined)
     if (sessionId) {
       await ($.session.send as unknown as (a: unknown) => Promise<unknown>)({ to: { sessionId }, text }).catch(() => undefined)
@@ -401,8 +423,8 @@ async function countTurn($: $) {
  */
 async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   await load($)
-  await $.fs.write(`${root}${PAGE_FILE}`, PAGE_HTML)
-  const known = await $.fs.exists(`${root}${ARTIFACT_FILE}`).catch(() => false)
+  await $.fs.write(`${await rootOf($)}${PAGE_FILE}`, PAGE_HTML)
+  const known = await $.fs.exists(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => false)
   const ask = known
     ? `[tree] The interactive Ambiflex page already exists: its URL is in ${ARTIFACT_FILE}. Republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, then sync the tree into it (method item 9) and give me the link.`
     : `[tree] Publish the interactive Ambiflex page for this project. Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool: icon "tree", description "Live reasoning tree for this project", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>"} in ${ARTIFACT_FILE}, then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
@@ -645,9 +667,6 @@ type Options = {
 }
 
 let options: Options = { wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
-let sessionUsdAtStart = 0
-let sessionStartedAt = 0
-let warnedBudget = false
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -657,8 +676,9 @@ async function trackCost($: $): Promise<Cost> {
   const model = await $.session.model().catch(() => t.cost.model)
   const sessionUsd = usage?.cost?.usd ?? t.cost.sessionUsd
   const now = await $.clock.now()
-  const elapsedH = sessionStartedAt ? Math.max(0, now - sessionStartedAt) / 3600000 : 0
-  const spentThisSession = Math.max(0, sessionUsd - sessionUsdAtStart)
+  const c = await ctx($)
+  const elapsedH = c.startedAt ? Math.max(0, now - c.startedAt) / 3600000 : 0
+  const spentThisSession = Math.max(0, sessionUsd - c.usdAtStart)
   // Measure the rate once the session has run 5 minutes and spent something; assume before.
   const measured = elapsedH >= 5 / 60 && spentThisSession > 0 ? spentThisSession / elapsedH : 0
   const ratePerHour = options.hourlyRateUsd > 0 ? options.hourlyRateUsd : measured > 0 ? measured : assumedRate(model)
@@ -672,8 +692,8 @@ async function trackCost($: $): Promise<Cost> {
     const pct = (cost.spentUsd / options.budgetUsd) * 100
     if (pct >= 100 && t.auto.on) {
       await stopAuto($, `budget of $${options.budgetUsd} spent ($${cost.spentUsd})`)
-    } else if (pct >= options.alertPct && !warnedBudget) {
-      warnedBudget = true
+    } else if (pct >= options.alertPct && !c.warnedBudget) {
+      c.warnedBudget = true
       $.ui.toast(`Ambiflex: $${cost.spentUsd} of the $${options.budgetUsd} budget spent (${Math.round(pct)}%). Est. $${cost.estimateUsd} more to finish.`)
     }
   }
@@ -704,8 +724,9 @@ export const register: Register = (on, opts) => {
   options = { ...options, ...(opts as Partial<Options>) }
 
   on('session.start', async ($, e, next) => {
-    sessionStartedAt = await $.clock.now().catch(() => 0)
-    sessionUsdAtStart = (await $.session.usage().catch(() => undefined))?.cost?.usd ?? 0
+    const c = await ctx($)
+    c.startedAt = await $.clock.now().catch(() => 0)
+    c.usdAtStart = (await $.session.usage().catch(() => undefined))?.cost?.usd ?? 0
     await load($)
     await refreshGit($)
     await whatsNew($).catch(() => undefined)
@@ -791,14 +812,15 @@ export const register: Register = (on, opts) => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId) return next(e)
     if (e.text.startsWith('[tree] Auto mode')) {
-      pendingKick = undefined
+      ;(await ctx($)).pendingKick = undefined
       await countTurn($)
       return next(e)
     }
-    if (!pendingKick) return next(e)
-    const text = pendingKick
-    pendingKick = undefined
-    if (!handOverLost) { handOverLost = true; $.ui.toast('Ambiflex: this host does not run plugin-submitted prompts; hand-overs now ride your next turn.') }
+    const c = await ctx($)
+    if (!c.pendingKick) return next(e)
+    const text = c.pendingKick
+    c.pendingKick = undefined
+    if (!c.handOverLost) { c.handOverLost = true; $.ui.toast('Ambiflex: this host does not run plugin-submitted prompts; hand-overs now ride your next turn.') }
     await countTurn($)
     return next({ ...e, text: `${text}\n\n${e.text}` })
   })
@@ -946,7 +968,7 @@ export const register: Register = (on, opts) => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (!pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
+    if (!(await ctx($)).pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
     return next(e)
   })
 

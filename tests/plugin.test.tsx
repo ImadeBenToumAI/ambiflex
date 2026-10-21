@@ -4,13 +4,13 @@ import { VERSION, WHATS_NEW, parseCommits } from '../hooks/register'
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
 const runs: string[][] = []
-const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(), rootDir = '') => {
+const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(), rootDir: string | (() => string) = '', sessionOf: () => string = () => 'session_test') => {
   runs.length = 0
   on('fs.exists', async (_$: any, e: any) => ({ value: disk.has(e.path) }))
   on('fs.read', async (_$: any, e: any) => ({ value: disk.get(e.path) ?? '' }))
   on('fs.write', async (_$: any, e: any) => { disk.set(e.path, e.text); return { value: undefined } })
-  on('session.id', async () => ({ value: 'session_test' }))
-  on('session.root', async () => ({ value: rootDir }))
+  on('session.id', async () => ({ value: sessionOf() }))
+  on('session.root', async () => ({ value: typeof rootDir === 'function' ? rootDir() : rootDir }))
   on('process.run', async (_$: any, e: any) => { runs.push(e.argv); return { value: { exitCode: e.argv[1] === 'rev-parse' ? 1 : 0, stdout: '', stderr: '' } } })
   on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } })
   on('ui.status', async () => ({ value: undefined }))
@@ -297,4 +297,22 @@ test('a session rooted above the repository finds the tree in the one sub-folder
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Next', lens: 'step' } as never)
   expect([...disk.keys()].some(k => k.startsWith('/work/.ambiflex/'))).toBe(false)
   expect(disk.get('/work/repo/.ambiflex/log.jsonl')).toContain('"title":"Next"')
+})
+
+test('two sessions in one worker keep their own project: a write from one never lands in the other', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  let who = { id: 'session_A', root: '/projects/a' }
+  bottoms(on, [], disk, () => who.root, () => who.id)
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  await $.session.start({ source: 'startup', cwd: '/projects/a' } as never)
+  who = { id: 'session_B', root: '/projects/b' }
+  await $.session.start({ source: 'startup', cwd: '/projects/b' } as never)
+  who = { id: 'session_A', root: '/projects/a' }
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Only in A', lens: 'step' } as never)
+  expect(disk.get('/projects/a/.ambiflex/log.jsonl')).toContain('"title":"Only in A"')
+  expect(disk.get('/projects/b/.ambiflex/log.jsonl') ?? '').not.toContain('Only in A')
 })

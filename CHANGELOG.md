@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.7
+
+- **Fix: sessions are isolated.** With several sessions open at once (several projects in the desktop app), one session could write its nodes into another project's tree and push its Git history and activity to another project's page. Each session now keeps its own project root, history and page state, and runs git in its own folder.
+- After updating, run `/ambiflex page` in each project to resync its page.
+
 ## 0.6.6
 
 - **Fix: tree found from a parent folder.** A session rooted above the repository now finds the project's tree. This happens when a cloud session holds several repositories side by side. Before, it started a second, empty tree in the parent folder.
