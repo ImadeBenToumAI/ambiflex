@@ -225,6 +225,8 @@ test('/ambiflex page writes the page and asks Claude to publish it, then to repu
   expect(String((first as { text?: unknown }).text)).toContain('publish')
   expect(String((first as { context?: string[] }).context?.[0])).toContain('Publish the interactive Ambiflex page')
   expect(page).toContain('<title>Ambiflex</title>')
+  expect(page).toContain(`const PAGE_VERSION = '${VERSION}'`)
+  expect(page).not.toContain('__AMBIFLEX_VERSION__')
   files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/x"}')
   const again = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
   expect(String((again as { context?: string[] }).context?.[0])).toContain('republish .ambiflex/page.html to that same URL')

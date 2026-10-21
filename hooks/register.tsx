@@ -49,8 +49,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.8.1'
-export const WHATS_NEW = 'the new monochrome Ambiflex mark, on the page and as the plugin icon. Run /ambiflex page to republish the page.'
+export const VERSION = '0.8.2'
+export const WHATS_NEW = 'the version in use is shown at the foot of the page and of the panel, and in /ambiflex status; the page flags when it is older than the plugin. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -179,7 +179,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  await $.fs.write((await FILE($)), `${JSON.stringify({ ...next, project: await projectName($) }, null, 2)}\n`)
+  await $.fs.write((await FILE($)), `${JSON.stringify({ ...next, project: await projectName($), pluginVersion: VERSION }, null, 2)}\n`)
 }
 
 /** The project's name: its folder's name. */
@@ -496,7 +496,7 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   await load($)
   const guard = await ctx($)
   if (guard.blocked) return { ask: `[tree] ${guard.warning} Tell the user this in one sentence; do not create, publish or sync any Ambiflex page or tree from this session.`, text: guard.warning! }
-  await $.fs.write(`${await rootOf($)}${PAGE_FILE}`, PAGE_HTML)
+  await $.fs.write(`${await rootOf($)}${PAGE_FILE}`, PAGE_HTML.replace('__AMBIFLEX_VERSION__', VERSION))
   const name = await projectName($)
   const url = await artifactUrl($)
   const known = !!url
@@ -605,6 +605,7 @@ async function drawTree($: $, e: ResolveInput) {
       </Text>
       {t.auto.on && <Text color="yellow">{`Auto mode ON · turn ${t.auto.turns}/${t.auto.maxTurns}`}</Text>}
       {running.length > 0 && <Text color="red">{`Agents running: ${running.length}`}</Text>}
+      <Text dimColor>{`Ambiflex v${VERSION}`}</Text>
     </Box>
   )
 
@@ -863,7 +864,8 @@ export const register: Register = (on, opts) => {
     const [verb, arg] = String(e.args ?? '').trim().split(/\s+/)
     if (verb === 'auto') return { text: await startAuto($, arg ? Number(arg) || undefined : undefined, true) }
     if (verb === 'stop') { await stopAuto($, 'stopped by command'); return { text: 'Auto mode off.' } }
-    if (verb === 'status') return { text: outline(await read($, tree)) }
+    if (verb === 'status') return { text: `Ambiflex v${VERSION}
+${outline(await read($, tree))}` }
     if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
     if (verb === 'update') return { text: await selfUpdate($) }
     await load($)

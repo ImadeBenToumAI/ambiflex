@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.8.2
+
+- **Version in use, everywhere.**
+  - The page footer shows `Ambiflex v<version>`. It turns amber when the page is older than the plugin that feeds it, with the command that updates it.
+  - The panel shows the version under its header.
+  - `/ambiflex status` starts with it.
+
 ## 0.8.1
 
 - **Monochrome identity.** The branching symbol, in black and white only, replaces the coloured mark in the page header. It is never tinted: graph colours stay for meaning. The app icon is now the plugin's icon, and the logo heads the README.
