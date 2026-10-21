@@ -2,6 +2,21 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.9.0
+
+Fixes from a field report on a real research project (Tashelhit STT: 18 nodes, two GPU runs).
+
+- **Writes are echoed and read back.** `tree_upsert` returns the node as stored and reads it back from disk. A field that did not land is an error, never a silent success.
+- **Goals are guarded.** An existing goal is replaced only with `replace: true`.
+- **Long jobs without a node are flagged.** When a long or billable job starts while no node is exploring, Ambiflex says so at that moment. This covers cloud GPU, docker, kubectl, training runs, `nohup` and background jobs.
+- **Titles name the finding.** Titles can be up to 40 characters, and a `headline` field shows under the title.
+- **Scores have a direction and a unit.** `direction` (lower is better for WER, loss, latency, cost) and `unit` are new; ranking and pruning follow the direction.
+- **Blocked status.** `blocked` takes a required `blockedOn`. Blocked nodes are left out of the ETA and listed at the top of the page as questions for you.
+- **Moved status.** `moved` takes a required `movedTo` and is left out of progress. `abandoned` now only means a track was wrong.
+- **Replayable proofs.** `verifyCmd` stores a proof command, and `tree_verify` re-runs it through the Bash tool, under your permissions.
+- **The page syncs itself.** The tree is pushed to the page after every change, and only to this project's page.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.8.2
 
 - **Version in use, everywhere.**

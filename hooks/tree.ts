@@ -1,7 +1,9 @@
 import type { Auto, Cost, Lens, Status, Tree, TreeNode } from '../types'
 
 export const LENSES: Lens[] = ['goal', 'altitude', 'depth', 'range', 'step']
-export const STATUSES: Status[] = ['proposed', 'exploring', 'review', 'done', 'validated', 'merged', 'abandoned']
+export const STATUSES: Status[] = ['proposed', 'exploring', 'review', 'blocked', 'done', 'validated', 'merged', 'abandoned', 'moved']
+/** Out of the plan: dropped because wrong (abandoned) or living elsewhere (moved). Neither counts in progress or ETA. */
+export const CLOSED: Status[] = ['abandoned', 'moved']
 export const FINISHED: Status[] = ['done', 'validated', 'merged']
 
 export const LENS_LABEL: Record<Lens, string> = {
@@ -16,10 +18,12 @@ export const STATUS_LABEL: Record<Status, string> = {
   proposed: 'proposed',
   exploring: 'exploring',
   review: 'needs review',
+  blocked: 'blocked',
   done: 'done',
   validated: 'validated',
   merged: 'merged',
   abandoned: 'abandoned',
+  moved: 'moved',
 }
 
 const LENS_COLOR: Record<Lens, string> = {
@@ -83,6 +87,9 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
   let status = input.status && STATUSES.includes(input.status) ? input.status : existing?.status ?? 'proposed'
   const verification = input.verification ?? existing?.verification
   if (status === 'done' && !verification) status = 'review'
+  // A wait or a move without its reason says nothing: keep the previous status.
+  if (status === 'blocked' && !(input.blockedOn ?? existing?.blockedOn)) status = existing?.status ?? 'proposed'
+  if (status === 'moved' && !(input.movedTo ?? existing?.movedTo)) status = existing?.status ?? 'proposed'
   // A node with an acceptance criterion is done only when its last iteration met it.
   const acceptance = input.acceptance ?? existing?.acceptance
   const tries = input.iterations ?? existing?.iterations ?? []
@@ -177,8 +184,8 @@ export function depths(tree: Tree): Map<string, number> {
   return memo
 }
 
-export function progress(tree: Tree): { total: number; finished: number; exploring: number; review: number; pct: number } {
-  const live = tree.nodes.filter(node => node.status !== 'abandoned')
+export function progress(tree: Tree): { total: number; finished: number; exploring: number; review: number; blocked: number; closed: number; pct: number } {
+  const live = tree.nodes.filter(node => !CLOSED.includes(node.status))
   const finished = live.filter(node => FINISHED.includes(node.status)).length
   const exploring = live.filter(node => node.status === 'exploring').length
   const review = live.filter(node => node.status === 'review').length
@@ -186,7 +193,9 @@ export function progress(tree: Tree): { total: number; finished: number; explori
   const w = (n: TreeNode) => n.weight ?? 1
   const all = live.reduce((sum, n) => sum + w(n), 0)
   const done = live.filter(node => FINISHED.includes(node.status)).reduce((sum, n) => sum + w(n), 0)
-  return { total: live.length, finished, exploring, review, pct: all ? Math.round((done / all) * 100) : 0 }
+  const blocked = live.filter(node => node.status === 'blocked').length
+  const closed = tree.nodes.length - live.length
+  return { total: live.length, finished, exploring, review, blocked, closed, pct: all ? Math.round((done / all) * 100) : 0 }
 }
 
 /** Current node: needs review first, then the latest exploring one, then the next proposed one. */
@@ -204,7 +213,7 @@ export function nextOpen(tree: Tree): TreeNode | undefined {
   const byId = new Map(tree.nodes.map(n => [n.id, n]))
   const settled = (id: string) => {
     const p = byId.get(id)
-    return !p || FINISHED.includes(p.status) || p.status === 'abandoned' || p.lens === 'goal'
+    return !p || FINISHED.includes(p.status) || CLOSED.includes(p.status) || p.lens === 'goal'
   }
   // A numbered step waits for the earlier steps under the same parent.
   const stepsBefore = (n: TreeNode) => n.seq === undefined ? [] : tree.nodes.filter(o => o.id !== n.id && o.seq !== undefined && o.seq < n.seq! && (o.parents[0] ?? '') === (n.parents[0] ?? ''))
@@ -277,7 +286,7 @@ export function human(min: number): string {
 /** End-to-end estimate: the critical path (longest chain of remaining estimates) and the remaining sum. */
 export function eta(tree: Tree): { critical: number; remaining: number; path: string[] } {
   const byId = new Map(tree.nodes.map(n => [n.id, n]))
-  const open = (n: TreeNode) => !FINISHED.includes(n.status) && n.status !== 'abandoned'
+  const open = (n: TreeNode) => !FINISHED.includes(n.status) && !CLOSED.includes(n.status) && n.status !== 'blocked'
   const memo = new Map<string, { min: number; path: string[] }>()
   const visit = (id: string, seen: Set<string>): { min: number; path: string[] } => {
     const hit = memo.get(id)
@@ -487,13 +496,18 @@ export function outline(tree: Tree): string {
     + (typeof n.score === 'number' ? ` score ${n.score}` : '')
     + (n.judge ? ` judge: ${cut(n.judge, 60)}` : '')
     + (n.seq !== undefined ? ` step ${n.seq}` : '')
+    + (n.headline ? ` — ${cut(n.headline, 80)}` : '')
+    + (typeof n.score === 'number' && (n.unit || n.direction === 'lower') ? `${n.unit ?? ''} (${n.direction === 'lower' ? 'lower' : 'higher'} is better)` : '')
+    + (n.blockedOn ? ` blocked on: ${cut(n.blockedOn, 80)}` : '')
+    + (n.movedTo ? ` moved to: ${cut(n.movedTo, 80)}` : '')
+    + (n.verifyCmd ? ` verify: ${n.verifyOk === undefined ? 'not re-run yet' : n.verifyOk ? `passes (${n.verifiedAt})` : `FAILS since ${n.verifiedAt}`}` : '')
     + (n.weight !== undefined && n.weight !== 1 ? ` weight ${n.weight}/5` : '')
     + (n.acceptance ? ` accept: ${cut(n.acceptance, 80)}` : '')
     + (n.iterations?.length ? ` ↻${n.iterations.length} (last: ${n.iterations[n.iterations.length - 1].passed ? 'passed' : 'not yet'}, ${cut(n.iterations[n.iterations.length - 1].result, 60)})` : '')
     + (n.summary ? `\n    ${cut(n.summary, 200)}` : ''),
   )
   const auto = tree.auto.on ? `Auto mode: ON (turn ${tree.auto.turns}/${tree.auto.maxTurns}, started ${tree.auto.startedAt ?? '?'})` : 'Auto mode: off'
-  return `Goal: ${cut(tree.goal || '(not set)', 200)}\nProgress: ${p.finished}/${p.total} (${p.pct}%), ${p.exploring} exploring, ${p.review} need review\n`
+  return `Goal: ${cut(tree.goal || '(not set)', 200)}\nProgress: ${p.finished}/${p.total} live nodes (${p.pct}% weighted by importance), ${p.exploring} exploring, ${p.review} need review, ${p.blocked} blocked${p.closed ? `; ${p.closed} abandoned or moved, not counted` : ''}\n`
     + `ETA: critical path ${human(e.critical)} (${e.path.join(' → ') || 'none'}), remaining effort ${human(e.remaining)}`
     + (c.samples ? `, calibration ×${c.factor} over ${c.samples} nodes` : '')
     + `\nExpected end: ${endLabel(tree, new Date(tree.nodes.reduce((m, n) => (n.updatedAt > m ? n.updatedAt : m), '') || Date.now()))}`
@@ -512,8 +526,14 @@ export function endLabel(tree: Tree, now: Date): string {
 /** A parent's tracks ranked by score (unscored last), abandoned ones left out. */
 export function rankChildren(tree: Tree, parent: string): TreeNode[] {
   return tree.nodes
-    .filter(n => n.parents.includes(parent) && n.status !== 'abandoned')
-    .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.createdAt.localeCompare(b.createdAt))
+    .filter(n => n.parents.includes(parent) && !CLOSED.includes(n.status))
+    .sort((a, b) => {
+      // A judge that reads lower-is-better (WER, loss, latency, cost) ranks the smallest score first.
+      const lower = (a.direction ?? b.direction ?? tree.nodes.find(n => n.id === parent)?.direction) === 'lower'
+      const none = lower ? Infinity : -Infinity
+      const d = lower ? (a.score ?? none) - (b.score ?? none) : (b.score ?? none) - (a.score ?? none)
+      return d || a.createdAt.localeCompare(b.createdAt)
+    })
 }
 
 /** Abandons every scored track under `parent` but the best; unscored tracks are kept. */

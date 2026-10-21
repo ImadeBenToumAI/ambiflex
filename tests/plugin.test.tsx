@@ -361,3 +361,38 @@ test('a session opened on a folder of several projects is warned and never uses 
   const page = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
   expect(String((page as { text?: string }).text)).toContain("project's own folder")
 })
+
+test('field report: writes are echoed and read back, the goal is guarded, long jobs without a node are flagged, proofs re-run', async ($, on) => {
+  mock.clock(on)
+  const toasts: string[] = []
+  bottoms(on, toasts)
+  let bashCalls = 0
+  on('tool.call', { tool: 'Bash' }, async (_$: any, e: any) => { bashCalls++; return { result: String(e.command).includes('AMBIFLEX_VERIFY_EXIT') ? 'AMBIFLEX_VERIFY_EXIT=0' : 'started' } as never })
+  const say = async (input: Record<string, unknown>) => String(((await $.tool.call(input as never)) as { result?: unknown }).result)
+
+  expect(await say({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Tashelhit STT' })).toContain('Goal set')
+  expect(await say({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'HolistiCX' })).toContain('Not changed')
+  expect(await say({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'HolistiCX', replace: true })).toContain('Goal set')
+
+  // Status and score given on create are stored and echoed back as stored.
+  const made = await say({ tool: 'mcp__ambiflex__tree_upsert', title: 'Fine-tune B: WER 55.9%', lens: 'altitude', status: 'review', score: 55.9, direction: 'lower', unit: '%', weight: 5 })
+  expect(made).toContain('n1 stored: {"status":"review"')
+  expect(made).toContain('"score":55.9')
+  expect(made).toContain('"direction":"lower"')
+
+  // Blocked needs what it waits on, and leaves the ETA.
+  expect(await say({ tool: 'mcp__ambiflex__tree_upsert', title: 'Speaker verdict', lens: 'step', status: 'blocked', estimate: '2d' })).toContain('blockedOn is required')
+  await say({ tool: 'mcp__ambiflex__tree_upsert', id: 'n2', status: 'blocked', blockedOn: 'native speaker verdict on 12 clips' })
+  expect(await say({ tool: 'mcp__ambiflex__tree_get' })).toContain('blocked on: native speaker verdict')
+
+  // A billable job with no exploring node is flagged at the moment it starts.
+  const ran = await $.tool.call({ tool: 'Bash', command: 'gcloud compute instances start gpu-l4 --zone europe-west4-a' } as never)
+  expect(String((ran as { result?: unknown }).result)).toContain('[Ambiflex]')
+  expect(toasts.some(t => t.includes('no node is exploring'))).toBe(true)
+
+  // A replayable proof is re-run through the Bash tool and recorded.
+  await say({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', verifyCmd: 'grep -q "eval_wer 0.559" run_ftB.log' })
+  const before = bashCalls
+  expect(await say({ tool: 'mcp__ambiflex__tree_verify' })).toContain('n1 passes')
+  expect(bashCalls).toBe(before + 1)
+})

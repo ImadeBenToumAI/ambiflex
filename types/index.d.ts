@@ -1,5 +1,5 @@
 export type Lens = 'goal' | 'altitude' | 'depth' | 'range' | 'step'
-export type Status = 'proposed' | 'exploring' | 'review' | 'done' | 'validated' | 'merged' | 'abandoned'
+export type Status = 'proposed' | 'exploring' | 'review' | 'blocked' | 'done' | 'validated' | 'merged' | 'abandoned' | 'moved'
 
 export type TreeNode = {
   id: string
@@ -24,6 +24,21 @@ export type TreeNode = {
   weight?: number
   /** The acceptance criterion: what a measured result must reach for the node to be done. */
   acceptance?: string
+  /** The finding in one line, shown under the title (the title names the node, the headline says what it found). */
+  headline?: string
+  /** How the judge's score reads: higher is better (default) or lower is better (WER, loss, latency, cost). */
+  direction?: 'higher' | 'lower'
+  /** The score's unit ("%", "ms", "$"). */
+  unit?: string
+  /** For a blocked node: what or whom it waits on. Blocked nodes leave the ETA. */
+  blockedOn?: string
+  /** For a moved node: where it lives now (another tree, project or URL). Moved nodes leave progress. */
+  movedTo?: string
+  /** A shell command whose exit status re-proves the verification; tree_verify re-runs it. */
+  verifyCmd?: string
+  /** Outcome of the last tree_verify run of verifyCmd. */
+  verifyOk?: boolean
+  verifiedAt?: string
   /** Each attempt at reaching the acceptance criterion, oldest first. */
   iterations?: Iteration[]
   startedAt?: string

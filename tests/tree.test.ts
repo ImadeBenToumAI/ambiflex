@@ -50,7 +50,7 @@ test('merges branches into a target node', () => {
 
 test('reports progress and the current node', () => {
   const t = sample()
-  expect(progress(t)).toEqual({ total: 4, finished: 1, exploring: 1, review: 0, pct: 25 })
+  expect(progress(t)).toEqual({ total: 4, finished: 1, exploring: 1, review: 0, blocked: 0, closed: 0, pct: 25 })
   expect(current(t)!.id).toBe('n3')
 })
 
@@ -215,4 +215,20 @@ test('numbered steps run in order, importance weighs progress, acceptance needs 
   expect(progress(t).pct).toBe(Math.round(6 / 8 * 100))
   expect(outline(t)).toContain('↻2')
   expect(outline(t)).toContain('step 2')
+})
+
+test('lower-is-better scores rank smallest first; blocked leaves the ETA; moved leaves progress', () => {
+  const now = '2026-10-21T10:00:00Z'
+  let t = emptyTree()
+  t = upsert(t, { title: 'Decoder', lens: 'depth', direction: 'lower' }, now).tree
+  t = upsert(t, { title: 'Greedy', lens: 'step', parents: ['n1'], score: 55.9 }, now).tree
+  t = upsert(t, { title: 'KenLM', lens: 'step', parents: ['n1'], score: 41.2 }, now).tree
+  expect(rankChildren(t, 'n1')[0].title).toBe('KenLM')
+  expect(prune(t, 'n1', now).kept?.title).toBe('KenLM')
+  t = upsert(t, { title: 'Verdict', lens: 'step', parents: ['n1'], estimate: '3d', status: 'blocked', blockedOn: 'speaker' }, now).tree
+  expect(eta(t).remaining).toBe(0)
+  expect(upsert(t, { id: 'n4', status: 'moved' }, now).node.status).toBe('blocked')
+  t = upsert(t, { id: 'n4', status: 'moved', movedTo: 'tts tree' }, now).tree
+  expect(progress(t).closed).toBe(1)
+  expect(progress(t).total).toBe(3)
 })
