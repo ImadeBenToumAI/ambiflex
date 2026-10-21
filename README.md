@@ -77,6 +77,8 @@ In this repository, `.claude/settings.json` enables the plugin for every session
 
 ## Safety notes
 
+- Open each session in the project's own folder. A session opened on a folder that holds several projects (a workspace with one sub-folder per repository) is warned and Ambiflex keeps no tree there, so two projects never share a tree or a page.
+
 - The system prompt carries only the method. The tree's content reaches the model through `tree_get`, as data, with long fields clipped. A repository cannot inject instructions through `tree.json`.
 - Auto mode submits prompts in your session under **your** permission mode. Set the permission mode you are comfortable with before starting it.
 - Auto mode stops on any interrupted or errored turn.

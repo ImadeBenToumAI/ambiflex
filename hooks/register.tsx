@@ -18,6 +18,8 @@ const PANE = 'ambiflex'
 // such as the project root would then be shared, and one session would read and write another's tree.
 type Ctx = {
   root?: string; sid: string
+  /** Set when the session is opened on a folder that holds several projects: what to tell the user. */
+  warning?: string; blocked?: boolean
   livePushedAt: number; liveOff: boolean; pushing: boolean
   pendingKick?: string; handOverLost: boolean
   usdAtStart: number; startedAt: number; warnedBudget: boolean
@@ -30,7 +32,7 @@ async function ctx($: $): Promise<Ctx> {
     c = { sid: id.slice(-6), livePushedAt: 0, liveOff: false, pushing: false, handOverLost: false, usdAtStart: 0, startedAt: 0, warnedBudget: false }
     sessions.set(id, c)
   }
-  if (c.root === undefined) c.root = await resolveRoot($)
+  if (c.root === undefined) { c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root)) }
   return c
 }
 const rootOf = async ($: $) => (await ctx($)).root ?? ''
@@ -47,8 +49,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.9'
-export const WHATS_NEW = 'each page is tied to its project: a page recorded for another project is never reused, and the page header shows the project. Run /ambiflex page to check this project\'s page.'
+export const VERSION = '0.7.0'
+export const WHATS_NEW = 'a session opened on a folder that holds several projects is warned and never mixes their trees: open the session in the project\'s own folder.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -117,9 +119,36 @@ async function resolveRoot($: $): Promise<string> {
   return found.length === 1 ? found[0] : base
 }
 
+/**
+ * A session opened on a folder that is not a Git repository but holds several (a workspace such as
+ * "Claude Coding" with one folder per project) has no project of its own: a tree there belongs to
+ * whichever project wrote it last. Ambiflex then refuses that tree and asks for the project's folder;
+ * when it picked a sub-folder's tree instead, it says which one.
+ */
+async function workspaceCheck($: $, root: string): Promise<{ warning?: string; blocked?: boolean }> {
+  const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
+  const base = r ? `${r}/` : ''
+  if (await $.fs.exists(`${base}.git`).catch(() => false)) return {}
+  const entries = await $.fs.list(r || undefined).catch(() => [] as { name: string; kind: string }[])
+  const repos: string[] = []
+  for (const e of entries) if (e.kind === 'dir' && !e.name.startsWith('.') && await $.fs.exists(`${base}${e.name}/.git`).catch(() => false)) repos.push(e.name)
+  if (repos.length < 2) return {}
+  const here = r.split('/').pop() || r
+  const list = repos.slice(0, 6).join(', ') + (repos.length > 6 ? ', …' : '')
+  if (root === base) {
+    return { blocked: true, warning: `Ambiflex: this session is opened on "${here}", a folder that holds ${repos.length} projects (${list}). Ambiflex keeps one tree per project and does not use one here. Open the session in the project's own folder, then run /ambiflex again.` }
+  }
+  const picked = root.replace(/\/$/, '').split('/').pop()
+  return { warning: `Ambiflex: this session is opened above ${repos.length} projects (${list}); it uses the tree of "${picked}". If this session works on another project, open it in that project's folder.` }
+}
+
 async function load($: $) {
   const c = await ctx($)
   c.root = await resolveRoot($)
+  c.warning = undefined; c.blocked = undefined
+  Object.assign(c, await workspaceCheck($, c.root))
+  // A workspace folder's tree is nobody's: show nothing rather than another project's tree.
+  if (c.blocked) { await update($, tree, () => emptyTree()); return }
   const hasLog = await $.fs.exists((await LOG($))).catch(() => false)
   if (hasLog) {
     const text = await $.fs.read((await LOG($))).catch(() => undefined)
@@ -142,6 +171,8 @@ async function load($: $) {
 
 /** Writes the snapshot only (cost, agents): nothing a replay needs. */
 async function save($: $, next: Tree) {
+  const guard = await ctx($)
+  if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
   await $.fs.write((await FILE($)), `${JSON.stringify({ ...next, project: await projectName($) }, null, 2)}\n`)
@@ -154,6 +185,8 @@ async function projectName($: $): Promise<string> {
 
 /** Applies one event to the live tree, appends it to the log, and refreshes the snapshot. */
 async function commit($: $, event: Omit<Event, 't' | 's'>): Promise<Tree> {
+  const guard = await ctx($)
+  if (guard.blocked) throw new Error(guard.warning)
   const t = await read($, tree)
   const full = { ...event, t: await nowIso($), s: (await ctx($)).sid } as Event
   const applied = applyOn(t, full)
@@ -320,6 +353,7 @@ const failed = (r: unknown) => !r || /conflict|changed since|refused|current ver
 
 /** Writes one doc of the page's store ("<collection>/current"), pinned to the version last seen. */
 async function pushDoc($: $, collection: string, data: Record<string, unknown>) {
+  if ((await ctx($)).blocked) return
   const c = await ctx($)
   const url = c.liveOff ? undefined : await artifactUrl($)
   if (!url) return
@@ -353,6 +387,7 @@ async function noteActivity($: $, agentId: string | undefined, patch: Pick<LiveA
 
 /** After an update, says once per project what changed. A first install (no tree yet) says nothing. */
 async function whatsNew($: $) {
+  if ((await ctx($)).blocked) return
   const seen = ((await $.fs.read((await SEEN($))).catch(() => '')) as string).trim()
   if (seen === VERSION) return
   const t = await read($, tree)
@@ -455,6 +490,8 @@ async function countTurn($: $) {
  */
 async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   await load($)
+  const guard = await ctx($)
+  if (guard.blocked) return { ask: `[tree] ${guard.warning} Tell the user this in one sentence; do not create, publish or sync any Ambiflex page or tree from this session.`, text: guard.warning! }
   await $.fs.write(`${await rootOf($)}${PAGE_FILE}`, PAGE_HTML)
   const name = await projectName($)
   const url = await artifactUrl($)
@@ -764,6 +801,8 @@ export const register: Register = (on, opts) => {
     await load($)
     await refreshGit($)
     await whatsNew($).catch(() => undefined)
+    const w = (await ctx($)).warning
+    if (w) $.ui.toast(w)
     for (const [name, description, schema] of [
       ['tree_get', 'Reads the reasoning tree (goal, nodes, statuses, progress, ETA, auto mode).', { type: 'object' }],
       ['tree_set_goal', 'Sets the root goal (the goal behind the goal).', {
@@ -837,7 +876,8 @@ export const register: Register = (on, opts) => {
 
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    return { sections: [...composed.sections, { id: `${PLUGIN}:method`, text: METHOD, scope: 'session' as const }] }
+    const w = (await ctx($)).warning
+    return { sections: [...composed.sections, { id: `${PLUGIN}:method`, text: w ? `${METHOD}\n\nWARNING for this session: ${w} Say so to the user before any tree work.` : METHOD, scope: 'session' as const }] }
   })
 
   // A queued hand-over that did not start the next main turn was lost by the host: say so once,

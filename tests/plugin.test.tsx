@@ -336,3 +336,26 @@ test('/ambiflex update updates from the marketplace the plugin came from and say
   expect(calls).toContain('claude plugin update ambiflex@imade')
   expect(String((r as { text?: string }).text)).toContain('/reload-plugins')
 })
+
+test('a session opened on a folder of several projects is warned and never uses the tree found there', async ($, on) => {
+  mock.clock(on)
+  const toasts: string[] = []
+  const disk = new Map<string, string>([
+    ['/ws/.ambiflex/log.jsonl', JSON.stringify({ t: '2026-10-01T00:00:00Z', s: 'x', kind: 'goal', goal: 'Another project' }) + '\n'],
+    ['/ws/tts/.git', ''], ['/ws/holisticx/.git', ''],
+  ])
+  bottoms(on, toasts, disk, '/ws')
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  on('fs.list', async () => ({ value: [{ name: 'tts', kind: 'dir' }, { name: 'holisticx', kind: 'dir' }, { name: '.ambiflex', kind: 'dir' }] }))
+  await $.session.start({ source: 'startup', cwd: '/ws' } as never)
+  expect(toasts.some(t => t.includes('holds 2 projects') && t.includes("project's own folder"))).toBe(true)
+  const got = await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)
+  expect(String((got as { result?: unknown }).result)).not.toContain('Another project')
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Stray', lens: 'step' } as never).catch(() => undefined)
+  expect(disk.get('/ws/.ambiflex/log.jsonl')).not.toContain('Stray')
+  const page = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  expect(String((page as { text?: string }).text)).toContain("project's own folder")
+})

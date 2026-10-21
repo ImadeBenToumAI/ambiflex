@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.7.0
+
+- **Fix: workspace folders are refused.** A session opened on a folder that holds several projects (not a Git repository, with two or more inside) is warned and keeps no tree there. Before, it used whatever tree sat there, written by another project. A toast and Claude both tell you to open the session in the project's own folder, and nothing is written or published from such a folder.
+- **Chosen sub-folder named.** When a session opened above several projects uses the only sub-folder that has a tree, it says which one.
+
 ## 0.6.9
 
 - **Fix: each page belongs to its project.** `.ambiflex/artifact.json` now records the project with the page URL. A page recorded for another project, for example while sessions were mixed before 0.6.7, is never reused or updated: `/ambiflex page` publishes a new page for this project.
