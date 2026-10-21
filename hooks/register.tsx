@@ -7,6 +7,7 @@ import { PAGE_HTML } from './page'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
+import { SUMMARY_SCRIPT, backfillLines, parseSummaries, transcriptDir } from './backfill'
 import { buildBrain, describe, elementOf } from './brain'
 import type { BrainSource } from './brain'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
@@ -61,8 +62,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.13.0'
-export const WHATS_NEW = 'Agent OS: the Skills tab becomes the brain of the project, CLAUDE.md at the centre with skills (what the agent knows how to do), memory (what it learned, proven nodes included), routines (what runs by itself) and applications (where it acts) in rings; every link is something a file says, elements in use pulse, and each one shows the tree nodes it served. The growth curve moves to the Growth view. Run /ambiflex page to republish the page.'
+export const VERSION = '0.13.1'
+export const WHATS_NEW = '/ambiflex backfill reads the sessions this project already had on this machine (Claude Code keeps their transcripts) and fills Usage, Agent OS and Growth with them: cost, models, skill uses and changes, the files of the brain they touched. Each session is read once; past sessions keep no usage-window readings, so their % of the week stays unknown.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -973,6 +974,15 @@ async function trackCost($: $): Promise<Cost> {
   return cost
 }
 
+async function pushUsage($: $, remainingUsd?: number) {
+  const root = await rootOf($)
+  const text = await $.fs.read(`${root}${USAGE_LOG}`).catch(() => '') as string
+  const doc = buildUsage({ at: await nowIso($), samples: parseSamples(text), planUsd: options.planUsd, ...(remainingUsd !== undefined ? { remainingUsd } : {}) })
+  await $.fs.write(`${root}.ambiflex/usage.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await pushDoc($, 'usage', doc as unknown as Record<string, unknown>, true)
+  return doc
+}
+
 // Usage monitor: one reading per turn, kept in .ambiflex/usage.jsonl (shared through git) and summed for the page.
 const USAGE_LOG = '.ambiflex/usage.jsonl'
 async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']>> | undefined, t: Tree, sessionUsd: number, remainingUsd: number) {
@@ -990,9 +1000,7 @@ async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']
   const attrs = await ATTRS($)
   const a = await $.fs.read(attrs).catch(() => '') as string
   if (!a.includes('usage.jsonl')) await $.fs.write(attrs, `${a}${a && !a.endsWith('\n') ? '\n' : ''}usage.jsonl merge=union\n`).catch(() => undefined)
-  const doc = buildUsage({ at: await nowIso($), samples: parseSamples(`${prior}\n${line}`), planUsd: options.planUsd, remainingUsd })
-  await $.fs.write(`${root}.ambiflex/usage.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
-  await pushDoc($, 'usage', doc as unknown as Record<string, unknown>, true)
+  const doc = await pushUsage($, remainingUsd)
   // Auto mode stops before the week runs out rather than in the middle of a node.
   if (t.auto.on && doc.hitsAt && doc.week?.resetsAt) {
     await stopAuto($, `the weekly usage window would reach 100% at ${doc.hitsAt}, before it resets at ${doc.week.resetsAt}`)
@@ -1038,6 +1046,52 @@ async function stepRoute($: $, agentId: string | undefined): Promise<Route | und
   const id = mainNode(t)
   const n = id ? t.nodes.find(x => x.id === id) : undefined
   return n ? route(n, cap) : planRoute(cap)
+}
+
+// /ambiflex backfill: the sessions this project had before the plugin logged them, read from Claude Code's
+// own transcripts on this machine, summarised once each (.ambiflex/backfill.json keeps which).
+const BACKFILL_FILE = '.ambiflex/backfill.json'
+async function appendLines(path: string, lines: string[], $: $) {
+  if (!lines.length) return
+  const prior = await $.fs.read(path).catch(() => '') as string
+  await $.fs.write(path, `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${lines.join('\n')}\n`)
+}
+async function backfill($: $): Promise<string> {
+  const root = await rootOf($)
+  const abs = root || await $.session.root().catch(() => '')
+  const home = await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
+  if (!home || !abs) return 'Backfill: cannot tell the home folder or the project folder of this session.'
+  const dir = transcriptDir(home, abs)
+  const doneFile = `${root}${BACKFILL_FILE}`
+  let done: string[] = []
+  try { done = JSON.parse((await $.fs.read(doneFile).catch(() => '[]')) as string || '[]') } catch { done = [] }
+  // The running session logs itself live: never summarise it.
+  const self = await $.session.id().catch(() => '')
+  const skip = [...done, self].filter(Boolean).join(',')
+  let out = ''
+  for (const py of ['python3', 'python']) {
+    const r = await $.process.run([py, '-c', SUMMARY_SCRIPT, dir, skip], { timeoutMs: 120_000 }).catch(() => undefined)
+    if (r && r.exitCode === 0) { out = r.stdout; break }
+  }
+  const sessions = parseSummaries(out)
+  if (!sessions.length) return done.length ? `Backfill: nothing new in ${dir} (${done.length} sessions already read).` : `Backfill: no past session found in ${dir}, or Python is not available to read them.`
+  const c = await ctx($)
+  const sources = c.brainSources ?? (c.brainSources = await brainSources($))
+  const lines = backfillLines(sessions, path => elementOf(path, sources))
+  await appendLines(`${root}${USAGE_LOG}`, lines.usage, $)
+  await appendLines(`${root}${SKILLS_LOG}`, lines.skills, $)
+  await appendLines(`${root}${BRAIN_LOG}`, lines.brain, $)
+  await $.fs.write(doneFile, `${JSON.stringify([...done, ...sessions.map(x => x.s)])}\n`)
+  const attrs = await ATTRS($)
+  const at = await $.fs.read(attrs).catch(() => '') as string
+  const need = ['usage.jsonl', 'skills.jsonl', 'brain.jsonl'].filter(f => !at.includes(f))
+  if (need.length) await $.fs.write(attrs, `${at}${at && !at.endsWith('\n') ? '\n' : ''}${need.map(f => `${f} merge=union`).join('\n')}\n`).catch(() => undefined)
+  await pushSkills($).catch(() => undefined)
+  await pushBrain($, true).catch(() => undefined)
+  await pushUsage($).catch(() => undefined)
+  const usd = sessions.reduce((k, x) => k + (x.usd ?? 0), 0)
+  const first = sessions.map(x => x.start).sort()[0].slice(0, 10)
+  return `Backfill: ${sessions.length} past sessions since ${first} read from ${dir}: ${lines.skills.length} skill uses and changes, ${lines.brain.length} brain touches, $${usd.toFixed(2)} at API prices. Past sessions keep no usage-window readings, so their % of the week is unknown; it is measured from now on.`
 }
 
 /** The wake word: "ambiflex …" (typed or dictated) in any session turns the method on for that prompt. */
@@ -1132,6 +1186,7 @@ export const register: Register = (on, opts) => {
 ${outline(await read($, tree))}` }
     if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
     if (verb === 'update') return { text: await selfUpdate($) }
+    if (verb === 'backfill') return { text: await backfill($) }
     await load($)
     await refreshGit($)
     await openPane($)

@@ -2,6 +2,14 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.13.1
+
+- **`/ambiflex backfill`.** It fills the Usage, Agent OS and Growth views from the sessions this project already had on this machine. Claude Code keeps their transcripts in `~/.claude/projects/`.
+  - **What it reads:** each session's cost, its models, its skill calls and changes, and the files of the brain it touched.
+  - **Each session is read once,** and the running session is skipped. Run it again any time: it only reads new sessions.
+  - **Its limit:** past sessions keep no usage-window readings, so their % of the week stays unknown.
+  - **Requirement:** Python (`python3`, present on macOS).
+
 ## 0.13.0
 
 **Agent OS: the brain of the project.** The Skills tab becomes Agent OS.
