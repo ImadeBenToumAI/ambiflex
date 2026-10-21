@@ -4,6 +4,7 @@
     <img src="assets/brand/ambiflex-logo-black.svg" alt="Ambiflex" width="320">
   </picture>
 </p>
+<p align="center"><em>Be ambitious. Then prove it.</em></p>
 
 # Ambiflex: an ambitious reasoning tree for Claude Code
 
