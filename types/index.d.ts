@@ -18,11 +18,21 @@ export type TreeNode = {
   /** The external judge this track declares (a test, benchmark or metric) and the score it reported. */
   judge?: string
   score?: number
+  /** Step number among the children of the same first parent: 1, 2, 3… run in that order. */
+  seq?: number
+  /** Importance from 1 (minor) to 5 (critical), independent of the time estimate. Default 1. */
+  weight?: number
+  /** The acceptance criterion: what a measured result must reach for the node to be done. */
+  acceptance?: string
+  /** Each attempt at reaching the acceptance criterion, oldest first. */
+  iterations?: Iteration[]
   startedAt?: string
   finishedAt?: string
   createdAt: string
   updatedAt: string
 }
+
+export type Iteration = { n: number; result: string; value?: number; passed: boolean; at: string }
 
 export type Auto = {
   on: boolean

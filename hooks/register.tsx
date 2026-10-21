@@ -6,7 +6,7 @@ import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log
 import { PAGE_HTML } from './page'
 import type { Event } from './log'
 import {
-  LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
+  iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
   merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
 } from './tree'
 
@@ -49,8 +49,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.7.0'
-export const WHATS_NEW = 'a session opened on a folder that holds several projects is warned and never mixes their trees: open the session in the project\'s own folder.'
+export const VERSION = '0.8.0'
+export const WHATS_NEW = 'ordered steps (1, 2, 3), importance from 1 to 5 that weighs progress, and iterations towards an acceptance criterion (↻3, with the history in the node). Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -75,6 +75,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 7. Tree search: when a node has several competing tracks (children), give each a judge (judge field: the test, benchmark or metric that scores it), then call tree_explore on the parent: the plugin spawns one subagent per track in parallel, each in its own worktree branch, and records the SCORE each reports. Then prune (tree_prune) and merge the winner. Show the budget (agents × minutes) before calling tree_explore; in auto mode go ahead within the plan's budget.
 8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. Work on the node the prompt names, verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
 9. Mobile page: if ${ARTIFACT_FILE} exists it holds the URL of this project's "Ambiflex" claude.ai page; use it only when its "project" field is this folder's name (a page of another project is never synced). After each tree change, sync it: ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json" (read the doc first and pass its version as if_version). Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
+10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 Keep the tree readable: short titles (under 24 characters), long text in detail.`
 
 const NODE_SCHEMA = {
@@ -91,6 +92,9 @@ const NODE_SCHEMA = {
     verification: { type: 'string', description: 'The external judge that proved the result (test, command, metric). Required for done.' },
     branch: { type: 'string', description: 'Related Git branch.' },
     judge: { type: 'string', description: 'The external judge this track declares: the test, benchmark or metric that scores it.' },
+    seq: { type: 'number', description: 'Step number among the children of the same parent (1, 2, 3…) when they must run in order; auto mode never starts step k before steps < k are finished.' },
+    weight: { type: 'number', description: 'Importance from 1 (minor) to 5 (critical), independent of the estimate; progress is weighted by it.' },
+    acceptance: { type: 'string', description: 'Acceptance criterion: the measurable result the node must reach (e.g. "WER < 8% on the test set"). With it, the node is done only through tree_iterate.' },
     score: { type: 'number', description: 'The score the judge reported (higher is better).' },
   },
 } as const
@@ -826,6 +830,16 @@ export const register: Register = (on, opts) => {
       ['tree_prune', 'Abandons every scored track under a parent but the best; returns the winner so you can merge it.', {
         type: 'object', properties: { parent: { type: 'string' } }, required: ['parent'],
       }],
+      ['tree_iterate', 'Records one attempt at a node\'s acceptance criterion: the measured result, its value, and whether it passed. A pass makes the node done with that attempt as its proof; a miss keeps it exploring for the next iteration.', {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          result: { type: 'string', description: 'What this attempt measured, in one line (e.g. "WER 9.1% on test-clean").' },
+          value: { type: 'number', description: 'The measured number, to chart the iterations.' },
+          passed: { type: 'boolean', description: 'True when the result meets the node\'s acceptance criterion.' },
+        },
+        required: ['id', 'result', 'passed'],
+      }],
       ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
         type: 'object',
         properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' } },
@@ -986,6 +1000,16 @@ export const register: Register = (on, opts) => {
     for (const n of dropped) await commit($, { kind: 'upsert', input: { id: n.id, status: 'abandoned', summary: `${n.summary ?? ''} Pruned: scored ${n.score} against ${kept!.score} for ${kept!.id}.`.trim() } })
     if (!kept) return { result: `No scored track under ${parent} yet.` }
     return { result: `Kept ${kept.id} "${kept.title}" (score ${kept.score}); abandoned ${dropped.map(n => n.id).join(', ') || 'none'}. Merge ${kept.id} into ${parent} with tree_merge once its results are folded in.` }
+  })
+
+  on('tool.call', { tool: 'mcp__ambiflex__tree_iterate' }, async ($, e) => {
+    const { id = '', result = '', value, passed = false } = e as unknown as { id?: string; result?: string; value?: number; passed?: boolean }
+    const t = await read($, tree)
+    const { node } = iterate(t, id, { result, value, passed }, await nowIso($))
+    if (!node) return { result: `No node ${id}.` }
+    await commit($, { kind: 'upsert', input: { id, iterations: node.iterations, status: node.status, ...(node.verification ? { verification: node.verification } : {}) } })
+    const n = node.iterations!.length
+    return { result: passed ? `${id} accepted at iteration ${n}: done.` : `${id} iteration ${n} recorded, criterion not met yet${node.acceptance ? ` (${node.acceptance})` : ''}: iterate again.` }
   })
 
   on('tool.call', { tool: 'mcp__ambiflex__tree_auto' }, async ($, e) => {

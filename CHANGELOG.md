@@ -2,6 +2,16 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.8.0
+
+- **Ordered steps.** Children that must run in order carry a step number (1, 2, 3). The graph shows them in that order, with an arrow to the next step, and auto mode never starts a step before the earlier ones are finished.
+- **Importance.** Each node can carry a weight from 1 (minor) to 5 (critical), independent of its time estimate. It shows as bars on the node, and critical nodes are outlined in red. Progress is weighted by importance, and *Critical only* filters the page.
+- **Iterations towards an acceptance criterion.** A node can declare a measurable target. Each attempt is recorded with the new `tree_iterate` tool (result, value, passed).
+  - The node shows ↻n.
+  - Its sheet shows the criterion, the history and a small chart of the values.
+  - The node is done only when an attempt passes.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.7.0
 
 - **Fix: workspace folders are refused.** A session opened on a folder that holds several projects (not a Git repository, with two or more inside) is warned and keeps no tree there. Before, it used whatever tree sat there, written by another project. A toast and Claude both tell you to open the session in the project's own folder, and nothing is written or published from such a folder.

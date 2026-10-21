@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { iterate, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -188,4 +188,31 @@ test('ranks tracks by score and parses an agent report', () => {
   expect(p.tree.nodes.find(n => n.id === 'n4')!.status).toBe('proposed')
   expect(parseReport('blah\nNODE: n2\nRESULT: it works\nSCORE: 0.75')).toEqual({ score: 0.75, result: 'it works', node: 'n2' })
   expect(parseReport('no score')).toEqual({ score: undefined, result: undefined, node: undefined })
+})
+
+test('numbered steps run in order, importance weighs progress, acceptance needs a passing iteration', () => {
+  const now = '2026-10-21T10:00:00Z'
+  let t = emptyTree()
+  t = upsert(t, { title: 'TTS model', lens: 'depth' }, now).tree
+  t = upsert(t, { title: 'Evaluate', lens: 'step', parents: ['n1'], seq: 3 }, now).tree
+  t = upsert(t, { title: 'Data', lens: 'step', parents: ['n1'], seq: 1 }, now).tree
+  t = upsert(t, { title: 'Train', lens: 'step', parents: ['n1'], seq: 2, weight: 5, acceptance: 'WER < 8%' }, now).tree
+  // A goal is an umbrella: its children are workable while it is open.
+  t = upsert(t, { id: 'n1', lens: 'goal' }, now).tree
+  expect(nextOpen(t)?.title).toBe('Data')
+  t = upsert(t, { id: 'n3', status: 'done', verification: 'rows counted' }, now).tree
+  expect(nextOpen(t)?.title).toBe('Train')
+  // Done without a passing iteration stays in review.
+  expect(upsert(t, { id: 'n4', status: 'done', verification: 'looks good' }, now).node.status).toBe('review')
+  t = iterate(t, 'n4', { result: 'WER 9.1%', value: 9.1, passed: false }, now).tree
+  expect(t.nodes.find(n => n.id === 'n4')?.status).toBe('exploring')
+  t = iterate(t, 'n4', { result: 'WER 7.6%', value: 7.6, passed: true }, now).tree
+  const train = t.nodes.find(n => n.id === 'n4')!
+  expect(train.status).toBe('done')
+  expect(train.iterations?.length).toBe(2)
+  expect(train.verification).toContain('iteration 2')
+  // Weighted by importance: Data (1) and Train (5) done, out of goal 1 + Data 1 + Train 5 + Evaluate 1.
+  expect(progress(t).pct).toBe(Math.round(6 / 8 * 100))
+  expect(outline(t)).toContain('↻2')
+  expect(outline(t)).toContain('step 2')
 })

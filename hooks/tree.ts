@@ -83,6 +83,10 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
   let status = input.status && STATUSES.includes(input.status) ? input.status : existing?.status ?? 'proposed'
   const verification = input.verification ?? existing?.verification
   if (status === 'done' && !verification) status = 'review'
+  // A node with an acceptance criterion is done only when its last iteration met it.
+  const acceptance = input.acceptance ?? existing?.acceptance
+  const tries = input.iterations ?? existing?.iterations ?? []
+  if (status === 'done' && acceptance && !tries[tries.length - 1]?.passed) status = 'review'
   const node: TreeNode = {
     ...existing,
     ...stripUndefined(input),
@@ -91,6 +95,8 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
     lens,
     status,
     parents,
+    ...(input.weight !== undefined || existing?.weight !== undefined ? { weight: Math.min(5, Math.max(1, Math.round(Number(input.weight ?? existing?.weight) || 1))) } : {}),
+    ...(input.seq !== undefined || existing?.seq !== undefined ? { seq: Math.max(1, Math.round(Number(input.seq ?? existing?.seq) || 1)) } : {}),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }
@@ -103,6 +109,30 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
     ? tree.nodes.map(one => (one.id === node.id ? node : one))
     : [...tree.nodes, node]
   return { tree: { ...tree, nodes }, node }
+}
+
+/**
+ * Records one attempt at a node's acceptance criterion. A passing attempt makes the node done, with
+ * the attempt as its verification; a failing one keeps it exploring for the next iteration.
+ */
+export function iterate(tree: Tree, id: string, attempt: { result: string; value?: number; passed: boolean }, now: string): { tree: Tree; node?: TreeNode } {
+  const node = tree.nodes.find(n => n.id === id)
+  if (!node) return { tree }
+  const iterations = [...(node.iterations ?? []), { n: (node.iterations?.length ?? 0) + 1, result: clip(attempt.result, 200), ...(typeof attempt.value === 'number' ? { value: attempt.value } : {}), passed: !!attempt.passed, at: now }]
+  const last = iterations[iterations.length - 1]
+  return upsert(tree, {
+    id,
+    iterations,
+    status: last.passed ? 'done' : 'exploring',
+    ...(last.passed ? { verification: `Acceptance met${node.acceptance ? ` (${clip(node.acceptance, 80)})` : ''} at iteration ${last.n}: ${last.result}` } : {}),
+  }, now)
+}
+
+/** Siblings in step order: by first parent, then step number, then as written. */
+export function bySeq(a: TreeNode, b: TreeNode): number {
+  const pa = a.parents[0] ?? '', pb = b.parents[0] ?? ''
+  if (pa !== pb) return 0
+  return (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER)
 }
 
 /** Merges branches: sources become `merged` and parents of the target node. */
@@ -152,7 +182,11 @@ export function progress(tree: Tree): { total: number; finished: number; explori
   const finished = live.filter(node => FINISHED.includes(node.status)).length
   const exploring = live.filter(node => node.status === 'exploring').length
   const review = live.filter(node => node.status === 'review').length
-  return { total: live.length, finished, exploring, review, pct: live.length ? Math.round((finished / live.length) * 100) : 0 }
+  // Weighted by importance: a critical node counts five times a minor one.
+  const w = (n: TreeNode) => n.weight ?? 1
+  const all = live.reduce((sum, n) => sum + w(n), 0)
+  const done = live.filter(node => FINISHED.includes(node.status)).reduce((sum, n) => sum + w(n), 0)
+  return { total: live.length, finished, exploring, review, pct: all ? Math.round((done / all) * 100) : 0 }
 }
 
 /** Current node: needs review first, then the latest exploring one, then the next proposed one. */
@@ -172,9 +206,11 @@ export function nextOpen(tree: Tree): TreeNode | undefined {
     const p = byId.get(id)
     return !p || FINISHED.includes(p.status) || p.status === 'abandoned' || p.lens === 'goal'
   }
-  const candidates = tree.nodes.filter(n => n.status === 'proposed' && n.lens !== 'goal' && n.parents.every(settled))
+  // A numbered step waits for the earlier steps under the same parent.
+  const stepsBefore = (n: TreeNode) => n.seq === undefined ? [] : tree.nodes.filter(o => o.id !== n.id && o.seq !== undefined && o.seq < n.seq! && (o.parents[0] ?? '') === (n.parents[0] ?? ''))
+  const candidates = tree.nodes.filter(n => n.status === 'proposed' && n.lens !== 'goal' && n.parents.every(settled) && stepsBefore(n).every(o => settled(o.id)))
   const d = depths(tree)
-  return candidates.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (d.get(a.id) ?? 0) - (d.get(b.id) ?? 0))[0]
+  return candidates.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER) || a.createdAt.localeCompare(b.createdAt) || (d.get(a.id) ?? 0) - (d.get(b.id) ?? 0))[0]
 }
 
 /** What auto mode works on next: a non-goal node already being explored (resume it), else the next open one. */
@@ -331,7 +367,7 @@ export function layoutRows(tree: Tree, selected: string | undefined, opts: Rende
   for (const node of shown) byDepth.set(d.get(node.id) ?? 0, [...(byDepth.get(d.get(node.id) ?? 0) ?? []), node])
   const rows: TreeNode[][] = []
   for (const k of [...byDepth.keys()].sort((a, b) => a - b)) {
-    const row = byDepth.get(k)!
+    const row = [...byDepth.get(k)!].sort(bySeq)
     for (let i = 0; i < row.length; i += MAXC) rows.push(row.slice(i, i + MAXC))
   }
   return { rows, folded }
@@ -368,7 +404,7 @@ export function renderSvg(tree: Tree, selected: string | undefined, opts: Render
       const ps = n.parents.map(p => pos.get(p)).filter((p): p is { x: number; y: number } => !!p)
       return ps.length ? ps.reduce((sum, p) => sum + p.x, 0) / ps.length : 0
     }
-    if (row > 0) nodes.sort((a, b) => bary(a) - bary(b))
+    if (row > 0) nodes.sort((a, b) => bary(a) - bary(b) || bySeq(a, b))
     maxCols = Math.max(maxCols, Math.min(nodes.length, MAXC))
     // A row wider than MAXC wraps onto further lines instead of shrinking the whole picture.
     nodes.forEach((node, i) => pos.set(node.id, { x: PAD + (i % MAXC) * (W + GX), y: PAD + TOP + (line + Math.floor(i / MAXC)) * (H + GY) }))
@@ -398,14 +434,16 @@ export function renderSvg(tree: Tree, selected: string | undefined, opts: Render
     const color = LENS_COLOR[node.lens]
     const faded = node.status === 'abandoned' ? ' opacity="0.35"' : node.status === 'merged' ? ' opacity="0.6"' : ''
     const dash = node.status === 'proposed' ? ' stroke-dasharray="5 4"' : ''
-    const strokeW = node.id === selected ? 3.5 : node.id === cur ? 2.5 : 1.5
+    const strokeW = node.id === selected ? 3.5 : node.id === cur || (node.weight ?? 1) >= 4 ? 2.5 : 1.5
     const fill = FINISHED.includes(node.status) ? `${color}22` : 'var(--card)'
     const badge = node.status === 'validated' ? '✓ ' : node.status === 'merged' ? '⤵ ' : node.status === 'review' ? '◆ ' : node.status === 'exploring' ? '● ' : ''
-    const meta = [node.id, STATUS_LABEL[node.status], node.estimate].filter(Boolean).join(' · ')
+    const step = node.seq !== undefined ? `${node.seq}. ` : ''
+    const loops = node.iterations?.length ? `↻${node.iterations.length}${node.iterations[node.iterations.length - 1].passed ? '✓' : ''}` : ''
+    const meta = [node.id, STATUS_LABEL[node.status], loops, node.weight && node.weight > 1 ? `w${node.weight}` : '', node.estimate].filter(Boolean).join(' · ')
     return `<g${faded}><title>${esc(`${node.title}\n${node.summary ?? ''}`)}</title>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="9" fill="${fill}" stroke="${color}" stroke-width="${strokeW}"${dash}/>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="5" rx="2.5" fill="${color}"/>`
-      + `<text x="${p.x + 10}" y="${p.y + 22}" font-size="12" font-weight="600" class="t1" font-family="system-ui,sans-serif">${esc(badge + cut(node.title, 20))}</text>`
+      + `<text x="${p.x + 10}" y="${p.y + 22}" font-size="12" font-weight="600" class="t1" font-family="system-ui,sans-serif">${esc(badge + step + cut(node.title, 20 - step.length))}</text>`
       + (opts.live?.[node.id]
         ? `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" font-weight="600" fill="#d97706" font-family="system-ui,sans-serif">${esc(cut(`✻ ${opts.live[node.id]}`, 28))}</text>`
         : `<text x="${p.x + 10}" y="${p.y + 38}" font-size="10" class="t2" font-family="system-ui,sans-serif">${esc(cut(meta, 28))}</text>`)
@@ -448,6 +486,10 @@ export function outline(tree: Tree): string {
     + (n.agent ? ` (agent: ${cut(n.agent, 40)})` : '')
     + (typeof n.score === 'number' ? ` score ${n.score}` : '')
     + (n.judge ? ` judge: ${cut(n.judge, 60)}` : '')
+    + (n.seq !== undefined ? ` step ${n.seq}` : '')
+    + (n.weight !== undefined && n.weight !== 1 ? ` weight ${n.weight}/5` : '')
+    + (n.acceptance ? ` accept: ${cut(n.acceptance, 80)}` : '')
+    + (n.iterations?.length ? ` ↻${n.iterations.length} (last: ${n.iterations[n.iterations.length - 1].passed ? 'passed' : 'not yet'}, ${cut(n.iterations[n.iterations.length - 1].result, 60)})` : '')
     + (n.summary ? `\n    ${cut(n.summary, 200)}` : ''),
   )
   const auto = tree.auto.on ? `Auto mode: ON (turn ${tree.auto.turns}/${tree.auto.maxTurns}, started ${tree.auto.startedAt ?? '?'})` : 'Auto mode: off'
