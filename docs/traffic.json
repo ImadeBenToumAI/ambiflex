@@ -84,12 +84,18 @@
    "cloners": 39,
    "views": 21,
    "visitors": 7
+  },
+  "2026-10-20": {
+   "clones": 117,
+   "cloners": 50,
+   "views": 7,
+   "visitors": 1
   }
  },
- "updatedAt": "2026-10-20T11:33:53.634Z",
+ "updatedAt": "2026-10-21T09:59:59.423Z",
  "totals": {
-  "clones": 78,
-  "views": 21,
-  "days": 14
+  "clones": 195,
+  "views": 28,
+  "days": 15
  }
 }
