@@ -4,6 +4,8 @@ import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, TreeNode } from '../types'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
+import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
+import type { SkillFiles } from './skills'
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
@@ -49,8 +51,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.9.0'
-export const WHATS_NEW = 'field-report release: writes are echoed and read back, goals are not overwritten without replace, long jobs without a node are flagged, blocked and moved statuses, lower-is-better scores with units, replayable proofs (tree_verify), the page syncs itself. Run /ambiflex page to republish the page.'
+export const VERSION = '0.10.0'
+export const WHATS_NEW = 'Agent OS release: a Skills tab charts the skills in .claude/skills (SKILL.md, learnings.md, eval.json) from the first commit, and records each use and change per session and agent; the page gets a light / dark / auto theme switch. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -264,6 +266,38 @@ async function pushGit($: $, text: string) {
   await pushDoc($, 'git', doc, true)
 }
 
+// Agent OS: the skills in .claude/skills, their history since the first commit, and their use per session and agent.
+const SKILLS_LOG = '.ambiflex/skills.jsonl'
+async function noteSkill($: $, skill: string, kind: 'use' | 'develop', agent?: string, file?: string) {
+  const path = `${await rootOf($)}${SKILLS_LOG}`
+  const prior = await $.fs.read(path).catch(() => '') as string
+  const line = JSON.stringify({ t: await nowIso($), s: (await ctx($)).sid, ...(agent ? { agent } : {}), skill, kind, ...(file ? { file } : {}) })
+  await $.fs.write(path, `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${line}\n`)
+  const attrs = await ATTRS($)
+  const a = await $.fs.read(attrs).catch(() => '') as string
+  if (!a.includes('skills.jsonl')) await $.fs.write(attrs, `${a}${a && !a.endsWith('\n') ? '\n' : ''}skills.jsonl merge=union\n`).catch(() => undefined)
+}
+
+async function pushSkills($: $) {
+  const root = await rootOf($)
+  const dir = `${root}.claude/skills`
+  const entries = await $.fs.list(dir).catch(() => [] as { name: string; kind: string }[])
+  const files: SkillFiles[] = []
+  for (const e of entries) {
+    if (e.kind !== 'dir' || e.name.startsWith('.')) continue
+    const inside = await $.fs.list(`${dir}/${e.name}`).catch(() => [] as { name: string; kind: string }[])
+    const get = async (f: string) => inside.some(x => x.name === f) ? await $.fs.read(`${dir}/${e.name}/${f}`).catch(() => undefined) as string | undefined : undefined
+    files.push({ name: e.name, skillMd: await get('SKILL.md'), learnings: await get('learnings.md'), evals: await get('eval.json') ?? await get('evals.json'), files: inside.map(x => x.name) })
+  }
+  const git = await $.process.run(['git', 'log', '--reverse', '--format=%x1e%aI', '--name-only', '--', '.claude/skills'], await inRoot($)).catch(() => undefined)
+  const log = git && git.exitCode === 0 ? parseSkillLog(git.stdout) : {}
+  const events = parseEvents(await $.fs.read(`${root}${SKILLS_LOG}`).catch(() => '') as string)
+  if (!files.length && !Object.keys(log).length && !events.length) return
+  const doc = buildSkills({ at: await nowIso($), files, log, events })
+  await $.fs.write(`${root}.ambiflex/skills.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await pushDoc($, 'skills', doc as unknown as Record<string, unknown>, true)
+}
+
 /** For every node that names a branch: its commits beyond main, and its PR when `gh` can tell. */
 async function refreshBranches($: $) {
   const t = await read($, tree)
@@ -291,7 +325,7 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
   const made = await $.process.run(args, await inRoot($)).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\n.seen-version\n').catch(() => undefined)
+  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\n.seen-version\n').catch(() => undefined)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -846,6 +880,7 @@ export const register: Register = (on, opts) => {
     c.usdAtStart = (await $.session.usage().catch(() => undefined))?.cost?.usd ?? 0
     await load($)
     await refreshGit($)
+    await pushSkills($).catch(() => undefined)
     await whatsNew($).catch(() => undefined)
     const w = (await ctx($)).warning
     if (w) $.ui.toast(w)
@@ -1144,6 +1179,21 @@ ${outline(await read($, tree))}` }
   on('tool.call', async ($, e, next) => {
     if (!(await ctx($)).pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
     return next(e)
+  })
+
+  // Agent OS: a skill invoked, or a file under .claude/skills/<name>/ written, by this session or one of its agents.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    const ran = await next(e)
+    const name = String((e as { skill?: string }).skill ?? '').replace(/^\//, '')
+    if (name) { await noteSkill($, name, 'use', e.agentId).catch(() => undefined); await pushSkills($).catch(() => undefined) }
+    return ran
+  })
+  for (const tool of ['Edit', 'Write', 'NotebookEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
+    const ran = await next(e)
+    const file = String((e as { file_path?: string; notebook_path?: string }).file_path ?? (e as { notebook_path?: string }).notebook_path ?? '')
+    const name = skillOf(file)
+    if (name) { await noteSkill($, name, 'develop', e.agentId, file.replace(/^.*\/\.claude\/skills\//, '')).catch(() => undefined); await pushSkills($).catch(() => undefined) }
+    return ran
   })
 
   // Refresh the Git view after a git command.

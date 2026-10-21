@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.10.0
+
+Agent OS release, built on the Toumaï Agent OS layout: `.claude/skills/<name>/` with `SKILL.md`, `learnings.md` (dated `## YYYY-MM-DD — title` entries) and `eval.json`.
+
+- **Skills tab.** It shows KPIs (skills, learnings, eval cases, commits, uses, sessions) and a curve of cumulative skills and learnings since the first commit. It also lists each skill with its latest learnings, and gives a per-session breakdown.
+- **Per-session tracking.** Each `Skill` call and each edit under `.claude/skills/` is recorded with its session and agent in `.ambiflex/skills.jsonl`, which is shared through git (`merge=union`).
+- **Light / dark / auto theme switch** on the page, remembered per viewer.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.9.0
 
 Fixes from a field report on a real research project (Tashelhit STT: 18 nodes, two GPU runs).
