@@ -4,7 +4,7 @@ Each version reaches you when Claude Code updates the plugin: turn on auto-updat
 
 ## 0.10.1
 
-- **Anonymous install count.** At its first session on a machine, the plugin downloads one empty file from the `install-ping` GitHub release. GitHub keeps only the download total; nothing else is sent (no account, project or content).
+- **Anonymous install count.** At its first session on a machine, the plugin downloads one tiny file (one byte) from the `install-ping` GitHub release. GitHub keeps only the download total; nothing else is sent (no account, project or content).
 - It is never sent in cloud sessions, or with `AMBIFLEX_NO_PING`, `DO_NOT_TRACK` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` set.
 - To turn it off, use the new **Anonymous install count** setting. See "Privacy" in the README.
 

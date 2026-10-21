@@ -1,6 +1,6 @@
 name: install-ping
 
-# Creates the install-ping release once: its empty installed.txt is what the plugin downloads, once per machine,
+# Creates the install-ping release once: its one-byte installed.txt is what the plugin downloads, once per machine,
 # so the asset's download count is the install count. Run by hand; it does nothing if the release exists.
 on:
   workflow_dispatch:
@@ -17,8 +17,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          gh release view install-ping --repo "$REPO" >/dev/null 2>&1 && { echo "already there"; exit 0; }
-          : > installed.txt
+          # GitHub refuses an empty asset: one byte.
+          echo 1 > installed.txt
+          if gh release view install-ping --repo "$REPO" >/dev/null 2>&1; then
+            gh release view install-ping --repo "$REPO" --json assets -q '.assets[].name' | grep -qx installed.txt && { echo "already there"; exit 0; }
+            gh release upload install-ping installed.txt --repo "$REPO"; exit 0
+          fi
           gh release create install-ping installed.txt --repo "$REPO" --target "$GITHUB_SHA" --latest=false \
             --title "Install count (not a version)" \
             --notes "The plugin downloads this empty file once per machine; its download count is the install count. Nothing else is sent. See Privacy in the README."

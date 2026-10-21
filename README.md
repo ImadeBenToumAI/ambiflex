@@ -95,7 +95,7 @@ In this repository, `.claude/settings.json` enables the plugin for every session
 
 ## Privacy: the install count
 
-To count installs, Ambiflex downloads one empty file from its GitHub release (`install-ping/installed.txt`) **once per machine**, at the first session. GitHub only keeps a download total. Nothing is sent: no account, no project, no content, no identifier. The request reaches GitHub like any download, so GitHub sees the IP address, as it does for a clone.
+To count installs, Ambiflex downloads one tiny file (one byte) from its GitHub release (`install-ping/installed.txt`) **once per machine**, at the first session. GitHub only keeps a download total. Nothing is sent: no account, no project, no content, no identifier. The request reaches GitHub like any download, so GitHub sees the IP address, as it does for a clone.
 
 - It is never sent in cloud sessions (`CLAUDE_CODE_REMOTE`), or when `AMBIFLEX_NO_PING`, `DO_NOT_TRACK` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
 - To turn it off, use the **Anonymous install count** setting.
