@@ -47,8 +47,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.8'
-export const WHATS_NEW = '/ambiflex update updates the plugin from inside the session; then /reload-plugins loads it, no restart.'
+export const VERSION = '0.6.9'
+export const WHATS_NEW = 'each page is tied to its project: a page recorded for another project is never reused, and the page header shows the project. Run /ambiflex page to check this project\'s page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -72,7 +72,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 6. If a Git branch serves a node, fill in branch.
 7. Tree search: when a node has several competing tracks (children), give each a judge (judge field: the test, benchmark or metric that scores it), then call tree_explore on the parent: the plugin spawns one subagent per track in parallel, each in its own worktree branch, and records the SCORE each reports. Then prune (tree_prune) and merge the winner. Show the budget (agents × minutes) before calling tree_explore; in auto mode go ahead within the plan's budget.
 8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. Work on the node the prompt names, verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
-9. Mobile page: if ${ARTIFACT_FILE} exists it holds the URL of the "Ambiflex" claude.ai page. After each tree change, sync it: ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json" (read the doc first and pass its version as if_version). Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
+9. Mobile page: if ${ARTIFACT_FILE} exists it holds the URL of this project's "Ambiflex" claude.ai page; use it only when its "project" field is this folder's name (a page of another project is never synced). After each tree change, sync it: ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json" (read the doc first and pass its version as if_version). Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 Keep the tree readable: short titles (under 24 characters), long text in detail.`
 
 const NODE_SCHEMA = {
@@ -143,7 +143,13 @@ async function load($: $) {
 /** Writes the snapshot only (cost, agents): nothing a replay needs. */
 async function save($: $, next: Tree) {
   await update($, tree, () => next)
-  await $.fs.write((await FILE($)), `${JSON.stringify(next, null, 2)}\n`)
+  // The snapshot names its project, so a page can tell whose tree it shows.
+  await $.fs.write((await FILE($)), `${JSON.stringify({ ...next, project: await projectName($) }, null, 2)}\n`)
+}
+
+/** The project's name: its folder's name. */
+async function projectName($: $): Promise<string> {
+  return (await rootOf($)).replace(/\/$/, '').split('/').pop() || 'project'
 }
 
 /** Applies one event to the live tree, appends it to the log, and refreshes the snapshot. */
@@ -265,7 +271,12 @@ export function toolLabel(e: { tool: string } & Record<string, unknown>): string
 
 async function artifactUrl($: $): Promise<string | undefined> {
   const raw = await $.fs.read(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => '') as string
-  try { return (JSON.parse(raw) as { url?: string }).url || undefined } catch { return undefined }
+  try {
+    const rec = JSON.parse(raw) as { url?: string; project?: string }
+    // A page recorded for another project (written while sessions were mixed) is never this one's.
+    if (rec.project && rec.project !== await projectName($)) return undefined
+    return rec.url || undefined
+  } catch { return undefined }
 }
 
 /** Sets (or with null clears) one loop's activity, then pushes it. */
@@ -445,11 +456,13 @@ async function countTurn($: $) {
 async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   await load($)
   await $.fs.write(`${await rootOf($)}${PAGE_FILE}`, PAGE_HTML)
-  const known = await $.fs.exists(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => false)
+  const name = await projectName($)
+  const url = await artifactUrl($)
+  const known = !!url
+  const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>", "project": "${name}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
   const ask = known
-    ? `[tree] The interactive Ambiflex page already exists: its URL is in ${ARTIFACT_FILE}. Republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, then sync the tree into it (method item 9) and give me the link.`
-    : `[tree] Publish the interactive Ambiflex page for this project. Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool: icon "tree", description "Live reasoning tree for this project", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>"} in ${ARTIFACT_FILE}, then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
-  const url = known ? await artifactUrl($) : undefined
+    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, write {"url": "${url}", "project": "${name}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
+    : `[tree] Publish the interactive Ambiflex page for the project "${name}". ${publishNew}`
   return { ask, text: known ? `Asking Claude to republish the interactive page${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : 'Asking Claude to publish the interactive page.' }
 }
 

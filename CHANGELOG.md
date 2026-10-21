@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.6.9
+
+- **Fix: each page belongs to its project.** `.ambiflex/artifact.json` now records the project with the page URL. A page recorded for another project, for example while sessions were mixed before 0.6.7, is never reused or updated: `/ambiflex page` publishes a new page for this project.
+- **Older records are checked first.** For a record written before this version, Claude compares the page's tree with this project's tree before republishing.
+- **Project name in the header.** The page header shows the project's name.
+
 ## 0.6.8
 
 - **`/ambiflex update`.** Updates the plugin from its marketplace (ambiflex or imade) without leaving the session. Then `/reload-plugins` loads the new version in the same session, with no restart.

@@ -227,7 +227,14 @@ test('/ambiflex page writes the page and asks Claude to publish it, then to repu
   expect(page).toContain('<title>Ambiflex</title>')
   files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/x"}')
   const again = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
-  expect(String((again as { context?: string[] }).context?.[0])).toContain('Republish')
+  expect(String((again as { context?: string[] }).context?.[0])).toContain('republish .ambiflex/page.html to that same URL')
+  expect(String((again as { context?: string[] }).context?.[0])).toContain('check it is this project')
+  // A page recorded for another project is never reused: a new page is published instead.
+  files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/other","project":"some-other-project"}')
+  const other = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  const ask = String((other as { context?: string[] }).context?.[0])
+  expect(ask).toContain('as a NEW artifact')
+  expect(ask).not.toContain('artifact/other')
 })
 
 test('live activity: an explorer shows what it does on its node, the main loop its tool, and both clear at the end', async ($, on) => {
