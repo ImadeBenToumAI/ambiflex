@@ -26,6 +26,7 @@ Claude fills the tree through the tools `tree_set_goal`, `tree_upsert`, `tree_me
 |---|---|
 | `/ambiflex` | Open the panel (or draw the tree inline on mobile) |
 | `/ambiflex page` | Publish (or republish) the interactive page for this project |
+| `/ambiflex update` | Update the plugin from its marketplace; then `/reload-plugins` loads it in the same session |
 | `/ambiflex auto [turns]` | Run the plan without approval; optional turn budget (default 40) |
 | `/ambiflex stop` | Stop auto mode |
 | `/ambiflex status` | Text report: progress, ETA, calibration, nodes |
@@ -62,7 +63,7 @@ To update by hand instead:
 claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex
 ```
 
-Then restart the session, and run `/ambiflex page` to republish the interactive page with the new version.
+Or, from inside a session: `/ambiflex update`. Either way, `/reload-plugins` then loads the new version in the same session (no restart), and `/ambiflex page` republishes the interactive page.
 
 To hear about new versions, watch the repository: **Watch** → **Custom** → **Releases** on [GitHub](https://github.com/ImadeBenToumAI/ambiflex). What changed in each version is in [CHANGELOG.md](https://github.com/ImadeBenToumAI/ambiflex/blob/main/CHANGELOG.md).
 

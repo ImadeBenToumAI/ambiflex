@@ -1,6 +1,10 @@
 # Changelog
 
-Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
+Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
+
+## 0.6.8
+
+- **`/ambiflex update`.** Updates the plugin from its marketplace (ambiflex or imade) without leaving the session. Then `/reload-plugins` loads the new version in the same session, with no restart.
 
 ## 0.6.7
 

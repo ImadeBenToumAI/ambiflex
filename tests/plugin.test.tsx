@@ -4,14 +4,14 @@ import { VERSION, WHATS_NEW, parseCommits } from '../hooks/register'
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
 const runs: string[][] = []
-const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(), rootDir: string | (() => string) = '', sessionOf: () => string = () => 'session_test') => {
+const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(), rootDir: string | (() => string) = '', sessionOf: () => string = () => 'session_test', proc?: (argv: string[]) => { exitCode: number; stdout: string; stderr: string }) => {
   runs.length = 0
   on('fs.exists', async (_$: any, e: any) => ({ value: disk.has(e.path) }))
   on('fs.read', async (_$: any, e: any) => ({ value: disk.get(e.path) ?? '' }))
   on('fs.write', async (_$: any, e: any) => { disk.set(e.path, e.text); return { value: undefined } })
   on('session.id', async () => ({ value: sessionOf() }))
   on('session.root', async () => ({ value: typeof rootDir === 'function' ? rootDir() : rootDir }))
-  on('process.run', async (_$: any, e: any) => { runs.push(e.argv); return { value: { exitCode: e.argv[1] === 'rev-parse' ? 1 : 0, stdout: '', stderr: '' } } })
+  on('process.run', async (_$: any, e: any) => { runs.push(e.argv); if (proc) return { value: proc(e.argv) }; return { value: { exitCode: e.argv[1] === 'rev-parse' ? 1 : 0, stdout: '', stderr: '' } } })
   on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } })
   on('ui.status', async () => ({ value: undefined }))
   on('ui.open', async () => ({ value: { isPlaced: false, reason: 'no-surface' } }))
@@ -315,4 +315,17 @@ test('two sessions in one worker keep their own project: a write from one never 
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Only in A', lens: 'step' } as never)
   expect(disk.get('/projects/a/.ambiflex/log.jsonl')).toContain('"title":"Only in A"')
   expect(disk.get('/projects/b/.ambiflex/log.jsonl') ?? '').not.toContain('Only in A')
+})
+
+test('/ambiflex update updates from the marketplace the plugin came from and says to reload', async ($, on) => {
+  mock.clock(on)
+  const calls: string[] = []
+  bottoms(on, [], new Map(), '', undefined, argv => {
+    calls.push(argv.join(' '))
+    const bad = argv[2] === 'marketplace' && argv[4] === 'ambiflex'
+    return { exitCode: bad ? 1 : 0, stdout: argv[2] === 'update' ? 'Updated ambiflex@imade to 0.6.8' : '', stderr: bad ? 'Marketplace not found' : '' }
+  })
+  const r = await $.command.run({ command: 'ambiflex', args: 'update' } as never)
+  expect(calls).toContain('claude plugin update ambiflex@imade')
+  expect(String((r as { text?: string }).text)).toContain('/reload-plugins')
 })

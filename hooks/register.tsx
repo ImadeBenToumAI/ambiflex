@@ -47,8 +47,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.7'
-export const WHATS_NEW = 'sessions are isolated: two projects open at once no longer share their tree, Git view or page. Run /ambiflex page to resync this project\'s page.'
+export const VERSION = '0.6.8'
+export const WHATS_NEW = '/ambiflex update updates the plugin from inside the session; then /reload-plugins loads it, no restart.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -348,6 +348,27 @@ async function whatsNew($: $) {
   await $.fs.write((await SEEN($)), `${VERSION}\n`)
   if (!seen && t.nodes.length === 0) return
   $.ui.toast(`Ambiflex ${VERSION}: ${WHATS_NEW}`)
+}
+
+/**
+ * `/ambiflex update`: fetches the marketplace and updates the plugin with the claude CLI, from whichever
+ * marketplace it was installed (ambiflex, or imade for the profile repository). The new version runs
+ * after `/reload-plugins`, in this same session: no restart.
+ */
+async function selfUpdate($: $): Promise<string> {
+  const manual = 'claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex'
+  const run = (argv: string[]) => $.process.run(argv, { timeoutMs: 120000 }).catch(() => undefined)
+  for (const market of ['ambiflex', 'imade']) {
+    const fetched = await run(['claude', 'plugin', 'marketplace', 'update', market])
+    if (!fetched) return `Could not run the claude CLI from here. In a terminal: ${manual}, then /reload-plugins in this session.`
+    if (fetched.exitCode !== 0) continue
+    const updated = await run(['claude', 'plugin', 'update', `ambiflex@${market}`])
+    const out = `${updated?.stdout ?? ''}${updated?.stderr ?? ''}`
+    if (!updated || updated.exitCode !== 0) return `Update failed (ambiflex@${market}): ${out.trim().split('\n').pop() || 'no output'}. In a terminal: ${manual}`
+    if (/already|up to date|latest/i.test(out)) return `Ambiflex ${VERSION} is already the latest from the ${market} marketplace.`
+    return `Ambiflex updated from the ${market} marketplace. Type /reload-plugins to load it in this session (no restart), then /ambiflex page to republish the page.`
+  }
+  return `No ambiflex or imade marketplace found on this machine. Install: /plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex`
 }
 
 async function trackAgentEnd($: $, key: string, id: string | undefined) {
@@ -764,7 +785,7 @@ export const register: Register = (on, opts) => {
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
-      argumentHint: '[auto [turns] | stop | status | page]',
+      argumentHint: '[auto [turns] | stop | status | page | update]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -778,6 +799,7 @@ export const register: Register = (on, opts) => {
     if (verb === 'stop') { await stopAuto($, 'stopped by command'); return { text: 'Auto mode off.' } }
     if (verb === 'status') return { text: outline(await read($, tree)) }
     if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
+    if (verb === 'update') return { text: await selfUpdate($) }
     await load($)
     await refreshGit($)
     await openPane($)
