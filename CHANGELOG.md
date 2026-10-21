@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.3
+
+- **Second screen.** Once the page exists, the panel links to it (*Open the live page ↗*) and `/ambiflex page` prints its URL. Open it in its own browser window on another display.
+- **Present mode.** *Present* (or the F key) shows only the tree and its live activity, full screen and scaled up for a large display. Esc or *Exit* leaves it.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.6.2
 
 - **Squash-merged branches stay connected.** In the Git graph, a branch merged by squash gets a "✓ merged in #N" pill and a dashed link to the commit on main that carries its work. Before, it showed as a line that stopped short.

@@ -22,8 +22,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = () => `${root}.ambiflex/live.json`
 const SEEN = () => `${root}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.2'
-export const WHATS_NEW = 'the Git graph links squash-merged branches to their commit on main (merged in #N). Run /ambiflex page to republish the page.'
+export const VERSION = '0.6.3'
+export const WHATS_NEW = 'the panel links to your live page (Open the live page ↗): put it on another screen, and use Present on the page for a full-screen view.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -390,7 +390,8 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   const ask = known
     ? `[tree] The interactive Ambiflex page already exists: its URL is in ${ARTIFACT_FILE}. Republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, then sync the tree into it (method item 9) and give me the link.`
     : `[tree] Publish the interactive Ambiflex page for this project. Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool: icon "tree", description "Live reasoning tree for this project", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>"} in ${ARTIFACT_FILE}, then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
-  return { ask, text: known ? 'Asking Claude to republish the interactive page.' : 'Asking Claude to publish the interactive page.' }
+  const url = known ? await artifactUrl($) : undefined
+  return { ask, text: known ? `Asking Claude to republish the interactive page${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : 'Asking Claude to publish the interactive page.' }
 }
 
 /** From the panel: a press may submit a prompt (a command may not: it holds the turn). */
@@ -426,6 +427,7 @@ async function kick($: $) {
 async function drawTree($: $, e: ResolveInput) {
   const ui = $.ui.resolve(e) as any
   const { Box, Text, Button, Markdown, Code } = ui
+  const pageUrl = await artifactUrl($)
   const t = await read($, tree)
   const sel = await read($, selected)
   const isExpanded = await read($, expanded)
@@ -454,7 +456,8 @@ async function drawTree($: $, e: ResolveInput) {
       {t.auto.on
         ? <Button key="auto-stop" onPress={() => stopAuto($, 'stopped from the panel')}>Stop auto</Button>
         : <Button key="auto-start" onPress={() => startAuto($, undefined, true)}>Run on auto</Button>}
-      <Button key="page" onPress={() => requestPage($)}>Interactive page</Button>
+      <Button key="page" onPress={() => requestPage($)}>{pageUrl ? 'Republish page' : 'Interactive page'}</Button>
+      {pageUrl && ui.Link && <ui.Link key="open-page" href={pageUrl}>Open the live page ↗</ui.Link>}
     </Box>
   )
 
