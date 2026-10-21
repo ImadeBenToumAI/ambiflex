@@ -2,6 +2,31 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.12.0
+
+Model routing, so your week goes where it matters. New **Model routing** setting: `off` (the default), `suggest` or `auto`.
+
+**How it routes**
+- **The plan.** The goal and the tracks run on the strongest allowed model at full effort.
+- **Each node.** It runs on the model and effort it needs:
+  - tracks and important nodes → Opus, high;
+  - standard steps → Sonnet, medium;
+  - minor steps → Sonnet, low;
+  - mechanical steps (rename, format, docs) → Haiku, low.
+
+**Safeguards**
+- A critical (importance 5) or risky node (security, auth, migration, production, data) never goes below the strong tier.
+- A failed proof moves the next attempt up a tier and an effort level.
+- A node with `model` / `effort` set keeps them (ask Claude to pin one).
+- Nothing goes above the **Top model** setting, or your session's own model when it is empty.
+- If a routed request is refused, it is sent again on the original model.
+
+**On the page**
+- Each node shows its route and why: "runs on" in auto, "needs" in suggest.
+- The Usage tab adds the week by model.
+
+Run `/ambiflex page` once to republish your page.
+
 ## 0.11.0
 
 Usage monitor, in one unit: **% of your week**. A subscription is limited by a weekly window, plus a 5-hour burst limit, not by credits or dollars.

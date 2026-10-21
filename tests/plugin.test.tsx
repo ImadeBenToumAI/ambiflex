@@ -423,3 +423,4 @@ test('the anonymous install count fires once per machine, never in the cloud or 
   await boot()
   expect(hits.length).toBe(1)
 })
+

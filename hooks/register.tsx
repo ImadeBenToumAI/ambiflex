@@ -5,6 +5,8 @@ import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, Tree
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
 import { buildUsage, parseSamples } from './usage'
+import { MODEL_IDS, planRoute, route, routes, tierOf } from './routing'
+import type { Route } from './routing'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
 import type { SkillFiles } from './skills'
 import type { Event } from './log'
@@ -26,6 +28,8 @@ type Ctx = {
   livePushedAt: number; liveOff: boolean; pushing: boolean
   pendingKick?: string; handOverLost: boolean
   usdAtStart: number; startedAt: number; warnedBudget: boolean
+  /** The model of the last request, for the usage readings. */
+  lastModel?: string
 }
 const sessions = new Map<string, Ctx>()
 async function ctx($: $): Promise<Ctx> {
@@ -52,8 +56,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.11.0'
-export const WHATS_NEW = 'usage monitor in one unit, % of your week (the window your subscription is limited by): what is left and when it resets, where the week ends at this pace, the share of this project, what the rest of the plan needs, the 5-hour burst limit, and a Usage tab with every session and the cost per node. API dollars stay in a detail. Auto mode stops before the week runs out. Run /ambiflex page to republish the page.'
+export const VERSION = '0.12.0'
+export const WHATS_NEW = 'model routing (off by default; set Model routing to suggest or auto): the plan runs on the strongest model at full effort, each node on the model and effort it needs; critical and risky nodes never go below the strong tier, a failed proof moves the next attempt up, a pinned node keeps its model, nothing goes above your top model. The page shows each node route and the week by model. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -80,6 +84,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 9. Mobile page: ${ARTIFACT_FILE} holds this project's "Ambiflex" claude.ai page ({url, project}). The plugin syncs the tree to it after every change by itself; you do not sync it by hand. Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 11. Scores: when the judge reads lower-is-better (WER, CER, loss, latency, cost), set direction "lower" and the unit ("%", "ms", "$"): ranking and pruning then keep the smallest. Read the stored node echoed by tree_upsert: it is what the user sees.
+12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
 const NODE_SCHEMA = {
@@ -103,6 +108,8 @@ const NODE_SCHEMA = {
     score: { type: 'number', description: 'The score the judge reported; how it reads is set by direction.' },
     direction: { type: 'string', enum: ['higher', 'lower'], description: 'higher (default) or lower is better for score: lower for WER, CER, loss, latency, cost.' },
     unit: { type: 'string', description: 'Unit of score: "%", "ms", "$"…' },
+    model: { type: 'string', description: 'Pin a model for this node (haiku, sonnet, opus, fable); model routing then keeps it. Empty string unpins.' },
+    effort: { type: 'string', enum: ['', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Pin a reasoning effort for this node. Empty string unpins.' },
     blockedOn: { type: 'string', description: 'Required with status blocked: what or whom the node waits on (e.g. "native speaker verdict on 12 clips").' },
     movedTo: { type: 'string', description: 'Required with status moved: where the work lives now (another tree, project or URL).' },
     verifyCmd: { type: 'string', description: 'Shell command whose exit status re-proves the verification (exit 0 = still true). tree_verify re-runs it.' },
@@ -189,7 +196,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, ...(options.routing !== 'off' ? { routing: options.routing, routes: routes(next, await routingCap($)) } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   if (await artifactUrl($, true)) await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
@@ -503,7 +510,7 @@ async function untracked($: $, command: string, background: boolean): Promise<st
 /** The stored node, compactly: the fields the user sees. */
 function echo(n: TreeNode): string {
   const f: Record<string, unknown> = { status: n.status, lens: n.lens, title: n.title }
-  for (const k of ['headline', 'score', 'unit', 'direction', 'weight', 'seq', 'estimate', 'acceptance', 'blockedOn', 'movedTo', 'verifyCmd', 'parents'] as const) if (n[k] !== undefined && !(Array.isArray(n[k]) && !(n[k] as unknown[]).length)) f[k] = n[k]
+  for (const k of ['headline', 'score', 'unit', 'direction', 'weight', 'seq', 'estimate', 'acceptance', 'blockedOn', 'movedTo', 'verifyCmd', 'model', 'effort', 'parents'] as const) if (n[k] !== undefined && !(Array.isArray(n[k]) && !(n[k] as unknown[]).length)) f[k] = n[k]
   return JSON.stringify(f)
 }
 
@@ -827,6 +834,8 @@ async function drawTree($: $, e: ResolveInput) {
 }
 
 type Options = {
+  routing: 'off' | 'suggest' | 'auto'
+  topModel: string
   planUsd: number
   installPing: boolean
   wakeWord: string
@@ -836,7 +845,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { routing: 'off', topModel: '', planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -887,7 +896,7 @@ async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']
   const line = JSON.stringify({
     t: await nowIso($), s: (await ctx($)).sid,
     ...(w ? { w: w.percentUsed, wr: w.resetsAt } : {}), ...(h ? { h: h.percentUsed, hr: h.resetsAt } : {}),
-    usd: +sessionUsd.toFixed(4), ...(mainNode(t) ? { node: mainNode(t) } : {}),
+    usd: +sessionUsd.toFixed(4), ...(mainNode(t) ? { node: mainNode(t) } : {}), ...((await ctx($)).lastModel ? { m: (await ctx($)).lastModel } : {}),
   })
   const prior = await $.fs.read(path).catch(() => '') as string
   await $.fs.write(path, `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${line}\n`)
@@ -901,6 +910,27 @@ async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']
   if (t.auto.on && doc.hitsAt && doc.week?.resetsAt) {
     await stopAuto($, `the weekly usage window would reach 100% at ${doc.hitsAt}, before it resets at ${doc.week.resetsAt}`)
   }
+}
+
+// Model routing: the cap is the top model setting, else the session's own model; nothing is routed above it.
+async function routingCap($: $): Promise<number> {
+  const t = tierOf(options.topModel)
+  if (t >= 0) return t
+  return tierOf(await $.session.model().catch(() => ''))
+}
+
+/** The route of one model request: the node its loop works on, or the plan when the main loop works on none. */
+async function stepRoute($: $, agentId: string | undefined): Promise<Route | undefined> {
+  const t = await read($, tree)
+  const cap = await routingCap($)
+  if (agentId) {
+    const node = (await read($, live))[agentId]?.node
+    const n = node ? t.nodes.find(x => x.id === node) : undefined
+    return n ? route(n, cap) : undefined
+  }
+  const id = mainNode(t)
+  const n = id ? t.nodes.find(x => x.id === id) : undefined
+  return n ? route(n, cap) : planRoute(cap)
 }
 
 /** The wake word: "ambiflex …" (typed or dictated) in any session turns the method on for that prompt. */
@@ -1191,7 +1221,11 @@ ${outline(await read($, tree))}` }
     let input = e
     if (id) {
       const wt = await branchFor($, id).catch(() => undefined)
-      if (wt) input = { ...e, prompt: `${e.prompt}\n\nWork in the Git worktree at ${wt.path} (branch ${wt.branch}): make your changes and commits there, never on the main checkout. Put the branch name in your report.` }
+      if (options.routing === 'auto') {
+        const n = (await read($, tree)).nodes.find(x => x.id === id)
+        if (n) { const r = route(n, await routingCap($)); input = { ...input, model: r.model, effort: r.effort } as typeof e }
+      }
+      if (wt) input = { ...input, prompt: `${e.prompt}\n\nWork in the Git worktree at ${wt.path} (branch ${wt.branch}): make your changes and commits there, never on the main checkout. Put the branch name in your report.` }
     }
     try {
       return await next(input)
@@ -1220,7 +1254,19 @@ ${outline(await read($, tree))}` }
   // Each model request is a loop thinking; each tool call is what it does.
   on('turn.step', async function* ($, e, next) {
     await noteActivity($, e.agentId, { phase: 'thinking', label: '' }).catch(() => undefined)
-    return yield* next(e)
+    const r = options.routing === 'auto' ? await stepRoute($, e.agentId).catch(() => undefined) : undefined
+    const c = await ctx($)
+    c.lastModel = r?.model ?? e.model
+    if (!r) return yield* next(e)
+    const model = MODEL_IDS[r.model] ?? r.model
+    if (model === e.model && r.effort === e.effort) return yield* next(e)
+    try {
+      return yield* next({ ...e, model, effort: r.effort })
+    } catch (err) {
+      // A route the account cannot serve must never stop the work: send the request as it was.
+      $.ui.toast(`Ambiflex routing: ${model} refused (${String(err).slice(0, 80)}), using ${e.model}.`)
+      return yield* next(e)
+    }
   })
 
   on('tool.call', async ($, e, next) => {

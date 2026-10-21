@@ -15,6 +15,8 @@ export type UsageSample = {
   usd: number
   /** The node being worked on when the sample was taken. */
   node?: string
+  /** The model of the last request before the sample. */
+  m?: string
 }
 
 export type UsageWindow = { pct: number; resetsAt?: string }
@@ -44,6 +46,8 @@ export type UsageDoc = {
   planPoints?: number
   /** Cost per node, from the cost each session spent while that node was being worked on. */
   nodes: { id: string; usd: number }[]
+  /** API-price cost by model, to read in % of the week through usdPerPoint. */
+  models: { model: string; usd: number }[]
   sessions: UsageSession[]
 }
 
@@ -103,6 +107,7 @@ export function buildUsage(input: { at: string; samples: UsageSample[]; planUsd:
   let projectPoints = 0, projectPointsWeek = 0, monthUsd = 0, usdForPoints = 0
   const month = at.slice(0, 7)
   const nodeUsd = new Map<string, number>()
+  const modelUsd = new Map<string, number>()
   for (const [s, list] of bySession) {
     const r = rises(list)
     const points = r.reduce((k, x) => k + x.points, 0)
@@ -118,6 +123,8 @@ export function buildUsage(input: { at: string; samples: UsageSample[]; planUsd:
       const node = list[i - 1].node
       const d = list[i].usd - list[i - 1].usd
       if (node && d > 0) nodeUsd.set(node, (nodeUsd.get(node) ?? 0) + d)
+      const m = list[i].m
+      if (m && d > 0) modelUsd.set(m, (modelUsd.get(m) ?? 0) + d)
     }
     const start = list[0].t, end = list[list.length - 1].t
     sessions.push({ s, start, end, minutes: Math.round((ms(end) - ms(start)) / 60e3), usd: +spent.toFixed(2), points: round1(points), nodes: [...new Set(list.map(x => x.node).filter((n): n is string => !!n))] })
@@ -130,6 +137,7 @@ export function buildUsage(input: { at: string; samples: UsageSample[]; planUsd:
     projectPointsWeek: round1(projectPointsWeek), projectPoints: round1(projectPoints),
     monthUsd: +monthUsd.toFixed(2), planUsd, usdPerPoint, planPoints,
     nodes: [...nodeUsd].map(([id, usd]) => ({ id, usd: +usd.toFixed(2) })).sort((a, b) => b.usd - a.usd),
+    models: [...modelUsd].map(([model, usd]) => ({ model, usd: +usd.toFixed(2) })).sort((a, b) => b.usd - a.usd),
     sessions,
   }
 }

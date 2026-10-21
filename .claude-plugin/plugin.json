@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -36,6 +36,18 @@
       "description": "Your own $/hour figure for cost projections (0 = measure it from this session, assumed before the first minutes).",
       "default": 0,
       "title": "Hourly rate (USD)"
+    },
+    "routing": {
+      "type": "string",
+      "description": "Model routing: off (one model throughout), suggest (each node shows the model and effort it needs), auto (each request runs on its node's model and effort: the plan on the strongest model at full effort, mechanical steps on a light one; critical and risky nodes never go below the strong tier, a failed proof moves up, a pinned node keeps its model).",
+      "default": "off",
+      "title": "Model routing (off, suggest, auto)"
+    },
+    "topModel": {
+      "type": "string",
+      "description": "The strongest model routing may use (haiku, sonnet, opus, fable). Empty: the session's own model, so routing never asks for a model your plan lacks.",
+      "default": "",
+      "title": "Top model for routing"
     },
     "planUsd": {
       "type": "number",

@@ -39,6 +39,9 @@ export type TreeNode = {
   /** Outcome of the last tree_verify run of verifyCmd. */
   verifyOk?: boolean
   verifiedAt?: string
+  /** A model and effort pinned for this node (model routing keeps them): an alias (haiku, sonnet, opus, fable) and low…max. */
+  model?: string
+  effort?: string
   /** Each attempt at reaching the acceptance criterion, oldest first. */
   iterations?: Iteration[]
   startedAt?: string
