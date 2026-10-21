@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.5
+
+- **Working now strip.** Under the progress bar, each running node gets a blinking chip with its id and title and what it is doing.
+- **Fly to the node.** Tap a chip and the graph glides to that node at a readable zoom, opens its sheet and flashes the node. The strip stays visible in Present mode.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.6.4
 
 - **Legend.** A folding *Legend* on the page explains each sign. The bar colour is the track type (Goal, Altitude, Depth, Range, Step). The ring is the status (proposed, exploring, needs review, done, abandoned). The activity signs are the red dot, the spinner and the subagent pills. Only you can validate a node.

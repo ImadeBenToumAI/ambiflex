@@ -22,8 +22,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = () => `${root}.ambiflex/live.json`
 const SEEN = () => `${root}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.4'
-export const WHATS_NEW = 'a Legend on the page explains the bar colour (track type), the ring (status) and the activity signs. Run /ambiflex page to republish the page.'
+export const VERSION = '0.6.5'
+export const WHATS_NEW = 'a Working now strip on the page: one blinking chip per running node with what it does; tap it to fly to the node. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
