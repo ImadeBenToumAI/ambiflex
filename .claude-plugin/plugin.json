@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -36,6 +36,12 @@
       "description": "Your own $/hour figure for cost projections (0 = measure it from this session, assumed before the first minutes).",
       "default": 0,
       "title": "Hourly rate (USD)"
+    },
+    "installPing": {
+      "type": "boolean",
+      "description": "Count this install, once per machine: one anonymous download of an empty file from the plugin's GitHub release, nothing else sent (no account, project or content). Off, or AMBIFLEX_NO_PING=1, never sends it.",
+      "default": true,
+      "title": "Anonymous install count"
     }
   }
 }

@@ -1,0 +1,24 @@
+name: install-ping
+
+# Creates the install-ping release once: its empty installed.txt is what the plugin downloads, once per machine,
+# so the asset's download count is the install count. Run by hand; it does nothing if the release exists.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the install-ping release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release view install-ping --repo "$REPO" >/dev/null 2>&1 && { echo "already there"; exit 0; }
+          : > installed.txt
+          gh release create install-ping installed.txt --repo "$REPO" --target "$GITHUB_SHA" --latest=false \
+            --title "Install count (not a version)" \
+            --notes "The plugin downloads this empty file once per machine; its download count is the install count. Nothing else is sent. See Privacy in the README."

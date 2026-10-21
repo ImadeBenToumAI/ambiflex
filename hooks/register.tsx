@@ -51,8 +51,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.10.0'
-export const WHATS_NEW = 'Agent OS release: a Skills tab charts the skills in .claude/skills (SKILL.md, learnings.md, eval.json) from the first commit, and records each use and change per session and agent; the page gets a light / dark / auto theme switch. Run /ambiflex page to republish the page.'
+export const VERSION = '0.10.1'
+export const WHATS_NEW = 'anonymous install count: once per machine, one download of an empty file from the GitHub release, nothing else sent. Turn it off with the Anonymous install count setting or AMBIFLEX_NO_PING=1.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -296,6 +296,22 @@ async function pushSkills($: $) {
   const doc = buildSkills({ at: await nowIso($), files, log, events })
   await $.fs.write(`${root}.ambiflex/skills.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
   await pushDoc($, 'skills', doc as unknown as Record<string, unknown>, true)
+}
+
+// The install count: once per machine, one GET of an empty release asset. GitHub counts the download;
+// nothing identifies the machine, the account or the project. Off with installPing: false or AMBIFLEX_NO_PING=1.
+export const PING_URL = 'https://github.com/ImadeBenToumAI/ambiflex/releases/download/install-ping/installed.txt'
+async function installPing($: $) {
+  if (options.installPing === false) return
+  const off = (v: string | undefined) => !!v
+  if (off(await $.env.get('AMBIFLEX_NO_PING').catch(() => undefined)) || off(await $.env.get('CLAUDE_CODE_REMOTE').catch(() => undefined))
+    || off(await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC').catch(() => undefined)) || off(await $.env.get('DO_NOT_TRACK').catch(() => undefined))) return
+  const home = await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
+  if (!home) return
+  const marker = `${home}/.claude/ambiflex-installed`
+  if (await $.fs.exists(marker).catch(() => true)) return
+  const r = await $.http.fetch(PING_URL).catch(() => undefined)
+  if (r && r.status < 500) await $.fs.write(marker, `${VERSION}\n`).catch(() => undefined)
 }
 
 /** For every node that names a branch: its commits beyond main, and its PR when `gh` can tell. */
@@ -810,6 +826,7 @@ async function drawTree($: $, e: ResolveInput) {
 }
 
 type Options = {
+  installPing: boolean
   wakeWord: string
   budgetUsd: number
   alertPct: number
@@ -817,7 +834,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -881,6 +898,7 @@ export const register: Register = (on, opts) => {
     await load($)
     await refreshGit($)
     await pushSkills($).catch(() => undefined)
+    installPing($).catch(() => undefined)
     await whatsNew($).catch(() => undefined)
     const w = (await ctx($)).warning
     if (w) $.ui.toast(w)

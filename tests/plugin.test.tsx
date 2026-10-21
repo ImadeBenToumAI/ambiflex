@@ -396,3 +396,30 @@ test('field report: writes are echoed and read back, the goal is guarded, long j
   expect(await say({ tool: 'mcp__ambiflex__tree_verify' })).toContain('n1 passes')
   expect(bashCalls).toBe(before + 1)
 })
+
+test('the anonymous install count fires once per machine, never in the cloud or when turned off', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  bottoms(on, [], disk, '/p')
+  const envs: Record<string, string | undefined> = { HOME: '/home/me' }
+  const hits: string[] = []
+  on('env.get', async (_$: any, e: any) => ({ value: envs[e.name ?? e.key] }))
+  on('http.fetch', async (_$: any, e: any) => { hits.push(e.url); return { value: { status: 200, ok: true, headers: {}, text: '' } } })
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  const boot = async () => { await $.session.start({ source: 'startup', cwd: '/p' } as never); await flush(); await flush() }
+  await boot()
+  expect(hits.length).toBe(1)
+  expect(hits[0]).toContain('/releases/download/install-ping/')
+  expect(disk.has('/home/me/.claude/ambiflex-installed')).toBe(true)
+  await boot()
+  expect(hits.length).toBe(1)
+  disk.delete('/home/me/.claude/ambiflex-installed')
+  envs.AMBIFLEX_NO_PING = '1'
+  await boot()
+  envs.AMBIFLEX_NO_PING = undefined; envs.CLAUDE_CODE_REMOTE = 'true'
+  await boot()
+  expect(hits.length).toBe(1)
+})

@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.10.1
+
+- **Anonymous install count.** At its first session on a machine, the plugin downloads one empty file from the `install-ping` GitHub release. GitHub keeps only the download total; nothing else is sent (no account, project or content).
+- It is never sent in cloud sessions, or with `AMBIFLEX_NO_PING`, `DO_NOT_TRACK` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` set.
+- To turn it off, use the new **Anonymous install count** setting. See "Privacy" in the README.
+
 ## 0.10.0
 
 Agent OS release, built on the Toumaï Agent OS layout: `.claude/skills/<name>/` with `SKILL.md`, `learnings.md` (dated `## YYYY-MM-DD — title` entries) and `eval.json`.
