@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then restart the session.
 
+## 0.6.4
+
+- **Legend.** A folding *Legend* on the page explains each sign. The bar colour is the track type (Goal, Altitude, Depth, Range, Step). The ring is the status (proposed, exploring, needs review, done, abandoned). The activity signs are the red dot, the spinner and the subagent pills. Only you can validate a node.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.6.3
 
 - **Second screen.** Once the page exists, the panel links to it (*Open the live page ↗*) and `/ambiflex page` prints its URL. Open it in its own browser window on another display.
