@@ -4,6 +4,7 @@ import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, TreeNode } from '../types'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
+import { buildUsage, parseSamples } from './usage'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
 import type { SkillFiles } from './skills'
 import type { Event } from './log'
@@ -51,8 +52,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.10.1'
-export const WHATS_NEW = 'anonymous install count: once per machine, one download of an empty file from the GitHub release, nothing else sent. Turn it off with the Anonymous install count setting or AMBIFLEX_NO_PING=1.'
+export const VERSION = '0.11.0'
+export const WHATS_NEW = 'usage monitor in one unit, % of your week (the window your subscription is limited by): what is left and when it resets, where the week ends at this pace, the share of this project, what the rest of the plan needs, the 5-hour burst limit, and a Usage tab with every session and the cost per node. API dollars stay in a detail. Auto mode stops before the week runs out. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -341,7 +342,7 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
   const made = await $.process.run(args, await inRoot($)).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\n.seen-version\n').catch(() => undefined)
+  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\nusage.json\n.seen-version\n').catch(() => undefined)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -826,6 +827,7 @@ async function drawTree($: $, e: ResolveInput) {
 }
 
 type Options = {
+  planUsd: number
   installPing: boolean
   wakeWord: string
   budgetUsd: number
@@ -834,7 +836,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -865,6 +867,7 @@ async function trackCost($: $): Promise<Cost> {
       $.ui.toast(`Ambiflex: $${cost.spentUsd} of the $${options.budgetUsd} budget spent (${Math.round(pct)}%). Est. $${cost.estimateUsd} more to finish.`)
     }
   }
+  await sampleUsage($, usage, t, sessionUsd, cost.estimateUsd).catch(() => undefined)
   for (const r of rateLimits) {
     if (r.percentUsed >= options.rateLimitAlertPct && !warnedLimits.has(r.kind)) {
       warnedLimits.add(r.kind)
@@ -872,6 +875,32 @@ async function trackCost($: $): Promise<Cost> {
     }
   }
   return cost
+}
+
+// Usage monitor: one reading per turn, kept in .ambiflex/usage.jsonl (shared through git) and summed for the page.
+const USAGE_LOG = '.ambiflex/usage.jsonl'
+async function sampleUsage($: $, usage: Awaited<ReturnType<$['session']['usage']>> | undefined, t: Tree, sessionUsd: number, remainingUsd: number) {
+  const root = await rootOf($)
+  const path = `${root}${USAGE_LOG}`
+  const win = (k: string) => usage?.rateLimits?.find(r => r.kind === k)
+  const w = win('seven_day'), h = win('five_hour')
+  const line = JSON.stringify({
+    t: await nowIso($), s: (await ctx($)).sid,
+    ...(w ? { w: w.percentUsed, wr: w.resetsAt } : {}), ...(h ? { h: h.percentUsed, hr: h.resetsAt } : {}),
+    usd: +sessionUsd.toFixed(4), ...(mainNode(t) ? { node: mainNode(t) } : {}),
+  })
+  const prior = await $.fs.read(path).catch(() => '') as string
+  await $.fs.write(path, `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${line}\n`)
+  const attrs = await ATTRS($)
+  const a = await $.fs.read(attrs).catch(() => '') as string
+  if (!a.includes('usage.jsonl')) await $.fs.write(attrs, `${a}${a && !a.endsWith('\n') ? '\n' : ''}usage.jsonl merge=union\n`).catch(() => undefined)
+  const doc = buildUsage({ at: await nowIso($), samples: parseSamples(`${prior}\n${line}`), planUsd: options.planUsd, remainingUsd })
+  await $.fs.write(`${root}.ambiflex/usage.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await pushDoc($, 'usage', doc as unknown as Record<string, unknown>, true)
+  // Auto mode stops before the week runs out rather than in the middle of a node.
+  if (t.auto.on && doc.hitsAt && doc.week?.resetsAt) {
+    await stopAuto($, `the weekly usage window would reach 100% at ${doc.hitsAt}, before it resets at ${doc.week.resetsAt}`)
+  }
 }
 
 /** The wake word: "ambiflex …" (typed or dictated) in any session turns the method on for that prompt. */

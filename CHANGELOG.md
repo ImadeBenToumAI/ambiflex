@@ -2,6 +2,22 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.11.0
+
+Usage monitor, in one unit: **% of your week**. A subscription is limited by a weekly window, plus a 5-hour burst limit, not by credits or dollars.
+
+- **Top of the page.** It shows:
+  - what is left of your week and when it resets;
+  - a pace mark: where you would be at the pace that ends the week at exactly 100%;
+  - where the week ends at the last 24 hours' pace, or when it runs out;
+  - this project's share of the week;
+  - what the rest of the plan needs;
+  - the 5-hour burst limit.
+- **Usage tab.** It lists every session on the project (start, minutes, % of the week, nodes) and the cost per node. API-dollar figures, compared with the new **Plan price** setting, stay in a closed detail.
+- **How it is measured.** One reading per turn goes into `.ambiflex/usage.jsonl`, which is shared through git. The share of this project is how much the weekly window rose while its sessions ran.
+- **Auto mode stops by itself** when the week would run out before it resets.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.10.1
 
 - **Anonymous install count.** At its first session on a machine, the plugin downloads one tiny file (one byte) from the `install-ping` GitHub release. GitHub keeps only the download total; nothing else is sent (no account, project or content).
