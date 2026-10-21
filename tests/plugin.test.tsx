@@ -4,13 +4,13 @@ import { VERSION, WHATS_NEW, parseCommits } from '../hooks/register'
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
 const runs: string[][] = []
-const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>()) => {
+const bottoms = (on: any, toasts: string[] = [], disk = new Map<string, string>(), rootDir = '') => {
   runs.length = 0
   on('fs.exists', async (_$: any, e: any) => ({ value: disk.has(e.path) }))
   on('fs.read', async (_$: any, e: any) => ({ value: disk.get(e.path) ?? '' }))
   on('fs.write', async (_$: any, e: any) => { disk.set(e.path, e.text); return { value: undefined } })
   on('session.id', async () => ({ value: 'session_test' }))
-  on('session.root', async () => ({ value: '' }))
+  on('session.root', async () => ({ value: rootDir }))
   on('process.run', async (_$: any, e: any) => { runs.push(e.argv); return { value: { exitCode: e.argv[1] === 'rev-parse' ? 1 : 0, stdout: '', stderr: '' } } })
   on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } })
   on('ui.status', async () => ({ value: undefined }))
@@ -282,4 +282,19 @@ test('the Git graph reads commits with their parents and refs', () => {
   expect(merge).toEqual({ h: 'a1', p: ['b2', 'c3'], refs: ['HEAD -> main', 'origin/main', 'tag: v1'], s: 'Merge branch x', a: 'Ada', t: '2026-10-20T10:00:00Z' })
   expect(root.p).toEqual([])
   expect(root.refs).toEqual([])
+})
+
+test('a session rooted above the repository finds the tree in the one sub-folder that has it', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>([['/work/repo/.ambiflex/log.jsonl', JSON.stringify({ t: '2026-10-01T00:00:00Z', s: 'x', kind: 'goal', goal: 'Found it' }) + '\n']])
+  bottoms(on, [], disk, '/work')
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  on('fs.list', async () => ({ value: [{ name: 'other', kind: 'dir' }, { name: 'repo', kind: 'dir' }, { name: 'notes.md', kind: 'file' }] }))
+  await $.session.start({ source: 'startup', cwd: '/work' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Next', lens: 'step' } as never)
+  expect([...disk.keys()].some(k => k.startsWith('/work/.ambiflex/'))).toBe(false)
+  expect(disk.get('/work/repo/.ambiflex/log.jsonl')).toContain('"title":"Next"')
 })

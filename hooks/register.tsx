@@ -22,8 +22,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = () => `${root}.ambiflex/live.json`
 const SEEN = () => `${root}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.6.5'
-export const WHATS_NEW = 'a Working now strip on the page: one blinking chip per running node with what it does; tap it to fly to the node. Run /ambiflex page to republish the page.'
+export const VERSION = '0.6.6'
+export const WHATS_NEW = 'a session opened above the repository (several repositories side by side) now finds the project tree instead of starting an empty one.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -76,10 +76,26 @@ let sessionId = 'local'
  * The tree lives in the repository as an append-only event log (merged by Git without
  * conflicts) plus a derived snapshot, tree.json, kept for readers and for the mobile page.
  */
+/**
+ * The project's root: the session's own, or, when that folder holds no tree and exactly one of its
+ * sub-folders does (a cloud session that clones several repositories side by side), that sub-folder.
+ * Without it, a session rooted above the repository started a second, empty tree beside the real one.
+ */
+async function resolveRoot($: $): Promise<string> {
+  const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
+  const base = r ? `${r}/` : ''
+  if (await $.fs.exists(`${base}${LOG_FILE}`).catch(() => false)) return base
+  const entries = await $.fs.list(r || undefined).catch(() => [] as { name: string; kind: string }[])
+  const found: string[] = []
+  for (const e of entries) {
+    if (e.kind === 'dir' && !e.name.startsWith('.') && await $.fs.exists(`${base}${e.name}/${LOG_FILE}`).catch(() => false)) found.push(`${base}${e.name}/`)
+  }
+  return found.length === 1 ? found[0] : base
+}
+
 async function load($: $) {
   sessionId = (await $.session.id().catch(() => 'local')).slice(-6)
-  const r = await $.session.root().catch(() => '')
-  root = r ? `${r.replace(/\/$/, '')}/` : ''
+  root = await resolveRoot($)
   const hasLog = await $.fs.exists(LOG()).catch(() => false)
   if (hasLog) {
     const text = await $.fs.read(LOG()).catch(() => undefined)
