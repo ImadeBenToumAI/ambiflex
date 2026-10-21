@@ -2,6 +2,24 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.13.0
+
+**Agent OS: the brain of the project.** The Skills tab becomes Agent OS.
+
+**The brain.** `CLAUDE.md` sits at the centre, with four rings around it:
+- **Skills**, what the agent knows how to do.
+- **Memory**, what it learned: `CLAUDE.md` files, `learnings.md`, memory notes, and tree nodes proven with a verification.
+- **Routines**, what runs by itself: commands, hooks, `os/routines`.
+- **Applications**, where it acts: project folders and MCP servers.
+
+**How it works**
+- Every link is something a file actually says: one file naming another element.
+- When a skill is used or a file of an element is written, the element pulses and records the tree node it served. "Used for" leads back to the tree.
+- Filter by ring, search, zoom with the wheel, drag to pan.
+- The growth curve stays one click away in the **Growth** view.
+
+Run `/ambiflex page` once to republish your page.
+
 ## 0.12.1
 
 Savings.

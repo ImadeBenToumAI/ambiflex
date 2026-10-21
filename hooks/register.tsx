@@ -7,6 +7,8 @@ import { PAGE_HTML } from './page'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
+import { buildBrain, describe, elementOf } from './brain'
+import type { BrainSource } from './brain'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
 import type { SkillFiles } from './skills'
 import type { Event } from './log'
@@ -30,6 +32,8 @@ type Ctx = {
   usdAtStart: number; startedAt: number; warnedBudget: boolean
   /** The model of the last request, for the usage readings. */
   compactDue?: boolean
+  /** The brain's sources, read at most once a minute. */
+  brainSources?: BrainSource[]; brainAt?: number
   lastModel?: string
 }
 const sessions = new Map<string, Ctx>()
@@ -57,8 +61,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.12.1'
-export const WHATS_NEW = 'savings: a light model (Haiku, low effort) sorts each step as mechanical, standard or risky for routing; the conversation is compacted between turns past 70% of the context, keeping the goal, the open nodes and their proofs; the status line shows the week left, the node in hand and its model.'
+export const VERSION = '0.13.0'
+export const WHATS_NEW = 'Agent OS: the Skills tab becomes the brain of the project, CLAUDE.md at the centre with skills (what the agent knows how to do), memory (what it learned, proven nodes included), routines (what runs by itself) and applications (where it acts) in rings; every link is something a file says, elements in use pulse, and each one shows the tree nodes it served. The growth curve moves to the Growth view. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -287,6 +291,82 @@ async function noteSkill($: $, skill: string, kind: 'use' | 'develop', agent?: s
   if (!a.includes('skills.jsonl')) await $.fs.write(attrs, `${a}${a && !a.endsWith('\n') ? '\n' : ''}skills.jsonl merge=union\n`).catch(() => undefined)
 }
 
+// Agent OS: the brain. Sources are read from the project and from ~/.claude; uses are logged in .ambiflex/brain.jsonl.
+const BRAIN_LOG = '.ambiflex/brain.jsonl'
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'venv', '__pycache__', 'target'])
+async function brainSources($: $): Promise<BrainSource[]> {
+  const root = await rootOf($)
+  const home = await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
+  const list = async (dir: string) => await $.fs.list(dir).catch(() => [] as { name: string; kind: string }[])
+  const text = async (path: string) => ((await $.fs.read(path).catch(() => '')) as string).slice(0, 8000)
+  const out: BrainSource[] = []
+  const file = async (id: string, ring: BrainSource['ring'], label: string, abs: string, rel: string) => {
+    const t = await text(abs)
+    if (t) out.push({ id, ring, label, path: rel, text: t, detail: describe(t) })
+  }
+  await file('core', 'core', 'CLAUDE.md', `${root}CLAUDE.md`, 'CLAUDE.md')
+  const bases: [string, string, string][] = [[root, '', '']]
+  if (home) bases.push([`${home}/`, '~/', 'user '])
+  for (const [base, prefix, tag] of bases) {
+    for (const e of await list(`${base}.claude/skills`)) {
+      if (e.kind !== 'dir' || e.name.startsWith('.')) continue
+      await file(`skill:${prefix}${e.name}`, 'skills', e.name, `${base}.claude/skills/${e.name}/SKILL.md`, `${prefix}.claude/skills/${e.name}/SKILL.md`)
+      const l = await text(`${base}.claude/skills/${e.name}/learnings.md`)
+      if (l) out.push({ id: `mem:${prefix}${e.name}/learnings`, ring: 'memory', label: `${e.name} learnings`, path: `${prefix}.claude/skills/${e.name}/learnings.md`, text: l, detail: `${(l.match(/^#{2,3}\s+\d{4}-\d{2}-\d{2}/gm) ?? []).length} dated lessons` })
+    }
+    for (const e of await list(`${base}.claude/commands`)) if (e.kind === 'file' && e.name.endsWith('.md')) await file(`routine:${prefix}${e.name}`, 'routines', `/${e.name.replace(/\.md$/, '')}`, `${base}.claude/commands/${e.name}`, `${prefix}.claude/commands/${e.name}`)
+    const settings = await text(`${base}.claude/settings.json`)
+    try { for (const ev of Object.keys(JSON.parse(settings || '{}').hooks ?? {})) out.push({ id: `hook:${prefix}${ev}`, ring: 'routines', label: `${tag}hook ${ev}`, path: `${prefix}.claude/settings.json`, detail: `Runs on ${ev}` }) } catch { /* not JSON */ }
+    if (prefix) await file('mem:~/CLAUDE.md', 'memory', 'user CLAUDE.md', `${base}.claude/CLAUDE.md`, '~/.claude/CLAUDE.md')
+  }
+  await file('mem:.claude/CLAUDE.md', 'memory', '.claude/CLAUDE.md', `${root}.claude/CLAUDE.md`, '.claude/CLAUDE.md')
+  for (const dir of ['os/areas', 'memory', '.claude/memory', 'os/handoffs']) for (const e of await list(`${root}${dir}`)) if (e.kind === 'file' && /\.(md|txt)$/.test(e.name)) await file(`mem:${dir}/${e.name}`, 'memory', e.name.replace(/\.(md|txt)$/, ''), `${root}${dir}/${e.name}`, `${dir}/${e.name}`)
+  for (const e of await list(`${root}os/routines`)) await file(`routine:os/routines/${e.name}`, 'routines', e.name.replace(/\.[a-z]+$/, ''), `${root}os/routines/${e.name}`, `os/routines/${e.name}`)
+  for (const e of await list(root || undefined)) if (e.kind === 'dir' && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name) && !['os', 'memory'].includes(e.name)) {
+    const readme = await text(`${root}${e.name}/README.md`)
+    out.push({ id: `app:${e.name}`, ring: 'applications', label: e.name, path: `${e.name}/`, ...(readme ? { text: readme, detail: describe(readme) } : {}) })
+  }
+  try { for (const name of Object.keys(JSON.parse(await text(`${root}.mcp.json`) || '{}').mcpServers ?? {})) out.push({ id: `mcp:${name}`, ring: 'applications', label: name, path: '.mcp.json', detail: 'MCP server' }) } catch { /* not JSON */ }
+  return out
+}
+
+async function noteBrain($: $, element: string, agent?: string) {
+  const path = `${await rootOf($)}${BRAIN_LOG}`
+  const t = await read($, tree)
+  const node = mainNode(t) ?? ''
+  const prior = await $.fs.read(path).catch(() => '') as string
+  await $.fs.write(path, `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${JSON.stringify({ t: await nowIso($), s: (await ctx($)).sid, element, node, ...(agent ? { by: agent } : {}) })}\n`)
+  const attrs = await ATTRS($)
+  const a = await $.fs.read(attrs).catch(() => '') as string
+  if (!a.includes('brain.jsonl')) await $.fs.write(attrs, `${a}${a && !a.endsWith('\n') ? '\n' : ''}brain.jsonl merge=union\n`).catch(() => undefined)
+}
+
+async function pushBrain($: $, force = false) {
+  const now = await $.clock.now().catch(() => Date.now())
+  const c = await ctx($)
+  if (!force && now - (c.brainAt ?? 0) < 60_000) return
+  c.brainAt = now
+  const sources = c.brainSources = await brainSources($)
+  const t = await read($, tree)
+  const proven = t.nodes.filter(n => ['done', 'validated', 'merged'].includes(n.status) && n.verification).map(n => ({ id: n.id, title: n.title, verification: n.verification!, at: n.finishedAt ?? n.updatedAt }))
+  const log = ((await $.fs.read(`${await rootOf($)}${BRAIN_LOG}`).catch(() => '')) as string).split('\n').filter(Boolean)
+  const links = log.flatMap(l => { try { const e = JSON.parse(l); return e?.element ? [{ element: e.element, node: e.node ?? '', at: e.t, by: e.by }] : [] } catch { return [] } })
+  if (!sources.length && !proven.length) return
+  const doc = buildBrain({ at: new Date(now).toISOString(), sources, proven, links })
+  await $.fs.write(`${await rootOf($)}.ambiflex/brain.json`, `${JSON.stringify(doc)}\n`).catch(() => undefined)
+  await pushDoc($, 'brain', doc as unknown as Record<string, unknown>, true)
+}
+
+/** A tool touched a file of the brain (or used a skill): note it, so the brain pulses there and links it to the node in hand. */
+async function touchBrain($: $, path: string, agent?: string) {
+  const c = await ctx($)
+  const sources = c.brainSources ?? (c.brainSources = await brainSources($))
+  const id = elementOf(path, sources)
+  if (!id) return
+  await noteBrain($, id, agent)
+  await pushBrain($, true)
+}
+
 async function pushSkills($: $) {
   const root = await rootOf($)
   const dir = `${root}.claude/skills`
@@ -350,7 +430,7 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
   const made = await $.process.run(args, await inRoot($)).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\nusage.json\n.seen-version\n').catch(() => undefined)
+  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\nusage.json\nbrain.json\n.seen-version\n').catch(() => undefined)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -984,6 +1064,7 @@ export const register: Register = (on, opts) => {
     await load($)
     await refreshGit($)
     await pushSkills($).catch(() => undefined)
+    await pushBrain($, true).catch(() => undefined)
     installPing($).catch(() => undefined)
     await whatsNew($).catch(() => undefined)
     const w = (await ctx($)).warning
@@ -1321,13 +1402,14 @@ ${outline(await read($, tree))}` }
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
     const ran = await next(e)
     const name = String((e as { skill?: string }).skill ?? '').replace(/^\//, '')
-    if (name) { await noteSkill($, name, 'use', e.agentId).catch(() => undefined); await pushSkills($).catch(() => undefined) }
+    if (name) { await noteSkill($, name, 'use', e.agentId).catch(() => undefined); await pushSkills($).catch(() => undefined); await touchBrain($, `.claude/skills/${name}/SKILL.md`, e.agentId).catch(() => undefined) }
     return ran
   })
   for (const tool of ['Edit', 'Write', 'NotebookEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
     const ran = await next(e)
     const file = String((e as { file_path?: string; notebook_path?: string }).file_path ?? (e as { notebook_path?: string }).notebook_path ?? '')
     const name = skillOf(file)
+    if (file) await touchBrain($, file, e.agentId).catch(() => undefined)
     if (name) { await noteSkill($, name, 'develop', e.agentId, file.replace(/^.*\/\.claude\/skills\//, '')).catch(() => undefined); await pushSkills($).catch(() => undefined) }
     return ran
   })
