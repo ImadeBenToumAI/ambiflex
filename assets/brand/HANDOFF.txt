@@ -1,0 +1,29 @@
+AMBIFLEX — MONOCHROME IDENTITY V1
+Approved direction: branching glyph (concept 02), exclusively black and white.
+
+PRIMARY FILES
+ambiflex-logo-black.svg: use on a white/light surface.
+ambiflex-logo-white.svg: use on a black/dark surface.
+ambiflex-symbol-black.svg / white.svg: standalone symbol.
+ambiflex-app-icon-dark.svg / light.svg: app icon, rounded-square background.
+Transparent PNG exports: symbol and logo at 2x; icons 16–512 pixels.
+ambiflex-brand-board.png: presentation preview.
+
+RULES FOR THE IMPLEMENTING SESSION
+Use only #000000 and #FFFFFF for the brand mark and wordmark.
+Keep graph colors for semantic states, agents, tracks or status; do not tint the logo.
+Choose black or white logo according to background contrast.
+Do not stretch, rotate, add shadows, gradients, outlines or effects.
+Keep clear space of at least 1/4 of the symbol height around the lockup.
+Minimum recommended symbol size: 16 px; horizontal logo: 128 px wide.
+Below 24 px prefer the standalone symbol. Validate in the actual UI.
+SVG logos and symbols are all paths, including lettering; no font installation needed.
+Wordmark base: Helvetica Neue Medium, optically spaced and converted to paths.
+The font software is not included. Presentation-board labels are live text.
+Tagline (optional, separate from logo): Explore freely. Ship with proof.
+No changes have been made to the product, repository, or protected Claude workspace.
+
+DESIGN NOTES
+Manual vector reconstruction from approved ImageGen concept 02, not automatic tracing.
+Refined 45-degree branches, consistent terminal widths, centered junction and quieter proportions.
+The deliverables are vector masters; PNGs are previews/exports, not the source of truth.

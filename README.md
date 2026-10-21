@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/ambiflex-logo-white.svg">
+    <img src="assets/brand/ambiflex-logo-black.svg" alt="Ambiflex" width="320">
+  </picture>
+</p>
+
 # Ambiflex: an ambitious reasoning tree for Claude Code
 
 Ambiflex turns Felix Rieseberg's **be-ambitious** method (Altitude, Depth, Range) into something you can **see and steer** while Claude Code works, and that can **run the plan on its own** once you have approved it.

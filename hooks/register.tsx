@@ -49,8 +49,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.8.0'
-export const WHATS_NEW = 'ordered steps (1, 2, 3), importance from 1 to 5 that weighs progress, and iterations towards an acceptance criterion (↻3, with the history in the node). Run /ambiflex page to republish the page.'
+export const VERSION = '0.8.1'
+export const WHATS_NEW = 'the new monochrome Ambiflex mark, on the page and as the plugin icon. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.8.1
+
+- **Monochrome identity.** The branching symbol, in black and white only, replaces the coloured mark in the page header. It is never tinted: graph colours stay for meaning. The app icon is now the plugin's icon, and the logo heads the README.
+
 ## 0.8.0
 
 - **Ordered steps.** Children that must run in order carry a step number (1, 2, 3). The graph shows them in that order, with an arrow to the next step, and auto mode never starts a step before the earlier ones are finished.
