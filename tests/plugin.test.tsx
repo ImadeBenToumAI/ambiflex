@@ -555,3 +555,27 @@ test('a session in a Git worktree uses the tree of the main checkout, and keeps 
   const snap = JSON.parse(disk.get('/repo/.ambiflex/tree.json')!)
   expect(snap.nodes.map((n: any) => n.title)).toEqual(['From the other session', 'From the worktree'])
 })
+
+test('overhead: a plugin-started turn is measured, a user turn is not, and doctor reports the range', async ($, on) => {
+  mock.clock(on)
+  let usd = 1
+  bottoms(on, [], new Map(), '/p')
+  on('session.usage', async () => ({ value: { cost: { usd }, context: { tokens: 40000, window: 200000 }, rateLimits: [] } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  await $.session.start({ source: 'startup', cwd: '/p' } as never)
+  // A user's turn: its cost is the task's, not Ambiflex's.
+  await $.turn.start({ text: 'fix the bug', turnId: 'u' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Fix', lens: 'step' } as never)
+  usd = 3
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 'u', reason: 'answer' } as never)
+  // A turn the plugin started: all of it is Ambiflex's.
+  await $.turn.start({ text: '[tree] Publish the page', turnId: 'p' } as never)
+  usd = 3.25
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 'p', reason: 'answer' } as never)
+  const r = String(((await $.command.run({ command: 'ambiflex', args: 'doctor' } as never)) as { text?: string }).text)
+  expect(r).toContain('Ambiflex overhead')
+  expect(r).toContain('1 tree calls')
+  expect(r).toContain('plugin turns $0.25')
+})

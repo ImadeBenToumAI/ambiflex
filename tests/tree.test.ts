@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine } from '../hooks/overhead'
 
 import { parseActions } from '../hooks/local'
 import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
@@ -329,4 +330,25 @@ test('an accepted proposal can close a node, with its verification', () => {
 
 test('local actions: torn lines are skipped and repeats kept once', () => {
   expect(parseActions('{"text":"a"}\n{"tex\n{"text":"a"}\n{"text":"b"}\n')).toEqual(['a', 'b'])
+})
+
+test('overhead: only what Ambiflex adds, as a range, with plugin turns measured and auto work apart', () => {
+  let l = emptyLedger()
+  for (let i = 0; i < 10; i++) l = noteRequest(l)
+  l = noteCall(l, '{"title":"x"}', 'ok '.repeat(100), 50000)
+  l = noteRequest(l)
+  l = { ...l, turns: 1, turnUsd: 0.2, autoUsd: 3 }
+  const o = overhead(l, 3000, 'claude-opus-5-5', 10)
+  expect(o.model).toBe('opus')
+  expect(o.usd.low).toBeLessThanOrEqual(o.usd.mid)
+  expect(o.usd.mid).toBeLessThanOrEqual(o.usd.high)
+  // Fixed: 11 requests × 3000 cached tokens at $0.40/M, plus one cache write.
+  expect(Math.abs(o.parts.fixed.low - (11 * 3000 * 0.4e-6 + 3000 * 5e-6)) < 1e-4).toBe(true)
+  // Plugin turns are measured; auto-mode work is never counted as overhead.
+  expect(o.parts.turns.low).toBe(0.2)
+  expect(o.usd.high).toBeLessThan(1)
+  expect(Math.abs(o.pct!.mid - o.usd.mid / 10 * 100) < 0.01).toBe(true)
+  expect(overheadLine(o)).toContain('not counted')
+  // A compaction drops what Ambiflex carried in context.
+  expect(noteCompact(l).carriedTok).toBe(0)
 })

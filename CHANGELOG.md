@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.19.0
+
+- **What Ambiflex itself costs.** The page shows an "Ambiflex ≈ X %" chip, and `/ambiflex doctor` the same line: only the delta the plugin adds to the session's bill, never the task's own tokens.
+  - **Fixed:** the method and the tree tools, re-read from cache on each request (sizes as Claude Code counts them where it can).
+  - **Tree calls:** their arguments and results, which stay in context until a compaction, and the extra round trip a call may cost (the live context size is measured).
+  - **Turns the plugin started** (page publish, `[tree]` actions, Take altitude): measured from the session's cost ledger.
+- Auto-mode turns are your task's work and routing savings are shown under Models: neither is counted or subtracted here.
+- Token counts are partly estimated and priced at public list prices, so the figure is a range (low–high) with a middle value. Subagents' requests are not counted yet.
+
 ## 0.18.1
 
 - **Parallel sessions share one tree.** A session opened in a Git worktree now uses the tree and the page of the repository's main checkout (found with `git rev-parse --git-common-dir`), so work split across parallel sessions shows on the project's page instead of in an invisible tree of its own. The main checkout and its sub-folders keep their tree as before.

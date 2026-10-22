@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 
 import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, TreeNode } from '../types'
+import { emptyLedger, estTokens, noteCall, noteCompact, noteRequest, overhead, overheadLine, type Ledger, type Overhead } from './overhead'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
 import { SERVER_PY, localShim, parseActions } from './local'
@@ -44,6 +45,9 @@ type Ctx = {
   /** The brain's sources, read at most once a minute. */
   brainSources?: BrainSource[]; brainAt?: number
   lastModel?: string
+  /** What Ambiflex itself adds to this session's bill (see overhead.ts). */
+  ledger?: Ledger; fixedTok?: number; lastCtxTok?: number; overhead?: Overhead
+  turnUsd?: number; turnKind?: 'user' | 'plugin' | 'mixed' | 'auto'
 }
 const sessions = new Map<string, Ctx>()
 // Project settings set from inside a session (/ambiflex routing …), where /plugin configure is not available.
@@ -78,7 +82,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.18.1'
+export const VERSION = '0.19.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -245,7 +249,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable' }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', ...(guard.overhead ? { overhead: guard.overhead } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   // pushDoc also keeps the local copy the local page reads, page or not.
@@ -790,9 +794,13 @@ async function stallCheck($: $) {
  * (/reload-plugins re-runs the module, not session.start): otherwise the agent keeps reading the schemas
  * of the version the session started with, and cannot see parameters the new version accepts.
  */
+/** The tree_* tools' names, descriptions and schemas, as sent: the fallback for the fixed part's size. */
+let TOOL_TEXT = ''
+
 async function registerTools($: $) {
   const c = await ctx($) as { toolsVersion?: string }
   if (c.toolsVersion === VERSION) return
+  let text = ''
   for (const [name, description, schema] of [
     ['tree_get', 'Reads the reasoning tree (goal, nodes, statuses, progress, ETA, auto mode).', { type: 'object' }],
     ['tree_set_goal', 'Sets the root goal (the goal behind the goal). An existing, different goal is replaced only with replace: true.', {
@@ -864,7 +872,9 @@ async function registerTools($: $) {
     }],
   ] as const) {
     await $.tool.register({ name, description, inputSchema: schema as Record<string, unknown> })
+    text += `${name}${description}${JSON.stringify(schema)}`
   }
+  TOOL_TEXT = text
   c.toolsVersion = VERSION
 }
 
@@ -890,16 +900,66 @@ async function noteTasks($: $, e: { tool: string; agentId?: string; subject?: st
 }
 
 /** `/ambiflex doctor`: whether the page receives this session's activity, since when, and if not why. */
+/**
+ * The fixed part: the method section and the tree_* schemas the session has loaded, as the host counts them
+ * (a local estimate, no request sent); 4 characters a token when the host gives no breakdown.
+ */
+async function fixedTokens($: $): Promise<number> {
+  const c = await ctx($)
+  if (c.fixedTok !== undefined) return c.fixedTok
+  const u = await ($.session.usage as unknown as (a: unknown) => Promise<{ context?: { breakdown?: { mcpTools?: { name: string; serverName: string; tokens: number; isLoaded: boolean }[] } } }>)({ breakdown: 'summary' }).catch(() => undefined)
+  const tools = u?.context?.breakdown?.mcpTools?.filter(t => /ambiflex/i.test(t.serverName) || /^(mcp__ambiflex__)?tree_/.test(t.name))
+  const toolTok = tools?.length ? tools.filter(t => t.isLoaded).reduce((a, t) => a + t.tokens, 0) : estTokens(TOOL_TEXT)
+  c.fixedTok = estTokens(METHOD) + toolTok
+  return c.fixedTok
+}
+
+/** A main turn starts: who started it decides whether its cost is Ambiflex's own. */
+async function startTurnCost($: $, text: string) {
+  const c = await ctx($)
+  c.turnUsd = (await $.session.usage().catch(() => undefined))?.cost?.usd
+  c.turnKind = text.startsWith('[tree] Auto mode') ? 'auto' : c.pendingKick ? 'mixed' : text.startsWith('[tree]') ? 'plugin' : 'user'
+}
+
+/** A main turn ends: its final answer is one more request; a plugin turn's cost is measured, not estimated. */
+async function endTurnCost($: $) {
+  const c = await ctx($)
+  let l = noteRequest(c.ledger ?? emptyLedger())
+  const now = (await $.session.usage().catch(() => undefined))?.cost?.usd
+  const spent = now !== undefined && c.turnUsd !== undefined ? Math.max(0, now - c.turnUsd) : 0
+  if (c.turnKind === 'plugin') l = { ...l, turns: l.turns + 1, turnUsd: l.turnUsd + spent }
+  else if (c.turnKind === 'mixed') l = { ...l, turns: l.turns + 1, mixedUsd: l.mixedUsd + spent }
+  else if (c.turnKind === 'auto') l = { ...l, autoUsd: l.autoUsd + spent }
+  c.ledger = l; c.turnKind = undefined; c.turnUsd = undefined
+}
+
+/** Each main-loop tool call is a request; a tree_* call also adds its own tokens. */
+async function noteToolCost($: $, e: { tool: string; agentId?: string } & Record<string, unknown>, ran: unknown) {
+  const c = await ctx($)
+  let l = noteRequest(c.ledger ?? emptyLedger())
+  const ctxTok = (await $.session.usage().catch(() => undefined))?.context?.tokens ?? 0
+  // A context that shrank by more than a third was compacted: what Ambiflex carried is gone.
+  if (c.lastCtxTok && ctxTok && ctxTok < c.lastCtxTok * 0.66) l = noteCompact(l)
+  if (ctxTok) c.lastCtxTok = ctxTok
+  if (e.tool.startsWith('mcp__ambiflex__')) {
+    const { tool: _t, agentId: _a, ...args } = e
+    const r = (ran as { result?: unknown } | undefined)?.result
+    l = noteCall(l, JSON.stringify(args), typeof r === 'string' ? r : JSON.stringify(r ?? ''), ctxTok)
+  }
+  c.ledger = l
+}
+
 async function doctor($: $): Promise<string> {
   const c = await ctx($)
   const url = await artifactUrl($, true)
-  if (!url) return 'No page recorded for this project: /ambiflex page publishes it.'
+  const cost = c.overhead ? `\n${overheadLine(c.overhead)}` : ''
+  if (!url) return `No page recorded for this project: /ambiflex page publishes it.${cost}`
   await pushLive($, true).catch(() => undefined)
   const lines = [`Page: ${url}`, `Plugin ${VERSION}, session ${c.sid}.`]
   if (c.syncReason) lines.push(`NOT syncing: ${c.syncReason}${c.syncFailedAt ? ` (since ${c.syncFailedAt})` : ''}. Retried every 2 minutes.`)
   else if (c.syncOkAt) lines.push(`Syncing: last write ${c.syncOkAt}. The page shows live activity, tasks and subagents.`)
   else lines.push('No write yet in this session.')
-  return lines.join('\n')
+  return lines.join('\n') + cost
 }
 
 /**
@@ -935,9 +995,10 @@ async function localPage($: $, arg?: string): Promise<string> {
 }
 
 /** Buttons pressed on the local page wait in .ambiflex/actions.jsonl: taken in order, once, then handed to this session. */
-async function drainLocal($: $) {
+async function drainLocal($: $, force = false) {
   const c = await ctx($) as { drainedAt?: number }
-  if (c.drainedAt && Date.now() - c.drainedAt < 3000) return
+  // Throttled between tool calls; the end of a turn always looks.
+  if (!force && c.drainedAt && Date.now() - c.drainedAt < 3000) return
   c.drainedAt = Date.now()
   const path = `${await rootOf($)}.ambiflex/actions.jsonl`
   const text = (await $.fs.read(path).catch(() => '')) as string
@@ -1285,6 +1346,7 @@ async function trackCost($: $): Promise<Cost> {
   const assumed = options.hourlyRateUsd <= 0 && measured <= 0
   const spentUsd = t.auto.startedAt ? Math.max(0, sessionUsd - (t.cost.sessionUsd - t.cost.spentUsd)) : t.cost.spentUsd
   const rateLimits = (usage?.rateLimits ?? []).map(r => ({ kind: r.kind, percentUsed: Math.round(r.percentUsed), resetsAt: r.resetsAt }))
+  c.overhead = overhead(c.ledger ?? emptyLedger(), await fixedTokens($), model, spentThisSession)
   const cost: Cost = { spentUsd: +spentUsd.toFixed(2), sessionUsd: +sessionUsd.toFixed(2), ratePerHour: +ratePerHour.toFixed(2), assumedRate: assumed, estimateUsd: costEstimate(t, ratePerHour), model, rateLimits }
   await save($, { ...t, cost })
 
@@ -1541,6 +1603,7 @@ ${outline(await read($, tree))}` }
     if (e.agentId) return next(e)
     ;(await ctx($)).busy = true
     await pushLive($, true).catch(() => undefined)
+    await startTurnCost($, e.text).catch(() => undefined)
     if (e.text.startsWith('[tree] Auto mode')) {
       ;(await ctx($)).pendingKick = undefined
       await countTurn($)
@@ -1573,13 +1636,14 @@ ${outline(await read($, tree))}` }
       }
       return ran
     }
+    await endTurnCost($).catch(() => undefined)
     const q = (await ctx($)) as { queued?: string }
     if (q.queued) { const text = q.queued; q.queued = undefined; await handOver($, text).catch(() => undefined); return ran }
     await trackCost($).catch(() => undefined)
     await stallCheck($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await stalePage($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await drainQueue($).catch(() => undefined)
-    await drainLocal($).catch(() => undefined)
+    await drainLocal($, true).catch(() => undefined)
     const c = await ctx($)
     if (c.compactDue) {
       c.compactDue = false
@@ -1591,6 +1655,19 @@ ${outline(await read($, tree))}` }
       if (e.reason === 'answer') await kick($).catch(() => undefined)
       else await stopAuto($, `turn ended with ${e.reason}`).catch(() => undefined)
     }
+    return ran
+  })
+
+  // Before the tree_* handlers, which answer without passing on, so every main-loop call is seen and counted.
+  on('tool.call', async ($, e, next) => {
+    if (!(await ctx($)).pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
+    const ran = await next(e)
+    if (!e.agentId) await noteToolCost($, e as never, ran).catch(() => undefined)
+    if (['TaskCreate', 'TaskUpdate', 'TodoWrite'].includes(e.tool)) await noteTasks($, e as never, ran).catch(() => undefined)
+    // A heartbeat every 30 s while work goes on, even when the activity line does not change.
+    const c = await ctx($)
+    if (!c.pushing && Date.now() - c.livePushedAt > 30e3) await pushLive($, true).catch(() => undefined)
+    if (!e.agentId) await drainLocal($).catch(() => undefined)
     return ran
   })
 
@@ -1803,16 +1880,6 @@ ${outline(await read($, tree))}` }
     }
   })
 
-  on('tool.call', async ($, e, next) => {
-    if (!(await ctx($)).pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
-    const ran = await next(e)
-    if (['TaskCreate', 'TaskUpdate', 'TodoWrite'].includes(e.tool)) await noteTasks($, e as never, ran).catch(() => undefined)
-    // A heartbeat every 30 s while work goes on, even when the activity line does not change.
-    const c = await ctx($)
-    if (!c.pushing && Date.now() - c.livePushedAt > 30e3) await pushLive($, true).catch(() => undefined)
-    if (!e.agentId) await drainLocal($).catch(() => undefined)
-    return ran
-  })
 
   // Agent OS: a skill invoked, or a file under .claude/skills/<name>/ written, by this session or one of its agents.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
