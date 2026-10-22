@@ -75,8 +75,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.16.2'
-export const WHATS_NEW = '/ambiflex page now really publishes (before, it waited for your next message), and after an update the project session republishes its page by itself, so the page never lags behind the plugin.'
+export const VERSION = '0.16.3'
+export const WHATS_NEW = 'The page says what a click is doing: Sent to Claude, then applied, or no answer after a minute; Take altitude shows the review is under way until it lands.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

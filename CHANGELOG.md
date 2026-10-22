@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.16.3
+
+- **The page says what a click is doing.** Accept / Refuse on a strategy review become "Sent to Claude…" and cannot be pressed twice; a toast says when the decision is applied, and after a minute without an answer the page asks whether the project's session is open, with Send again.
+- **Take altitude shows the review is under way** ("Taking altitude…, a few minutes") until it lands on the page, and says so if no answer comes within 5 minutes.
+
 ## 0.16.2
 
 - **`/ambiflex page` really publishes.** It used to leave its request in the command's context, which nothing reads until your next message: it said "Claude publishes it now" and the page did not change. The request now goes out as a prompt as soon as the command ends. Same fix for `/ambiflex altitude`.
