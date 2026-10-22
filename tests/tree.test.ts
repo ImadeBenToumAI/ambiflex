@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { iterate, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { iterate, runCost, silentRuns, parseTree, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -231,4 +231,32 @@ test('lower-is-better scores rank smallest first; blocked leaves the ETA; moved 
   t = upsert(t, { id: 'n4', status: 'moved', movedTo: 'tts tree' }, now).tree
   expect(progress(t).closed).toBe(1)
   expect(progress(t).total).toBe(3)
+})
+
+test('every field of every lens survives a write and a read back', () => {
+  let t = { ...emptyTree(), goal: 'Round trip' }
+  const full = { summary: 's', detail: 'd', headline: 'h', estimate: '2h', judge: 'j', score: 55.9, direction: 'lower' as const, unit: '%', weight: 5, seq: 2, acceptance: 'a', verifyCmd: 'true', model: 'opus', effort: 'high' as const }
+  for (const lens of ['goal', 'altitude', 'depth', 'range', 'step'] as const) t = upsert(t, { title: `T ${lens}`, lens, status: 'review', ...full }, T0).tree
+  t = upsert(t, { id: 'n2', title: 'Moved', status: 'moved', movedTo: 'other tree' }, T0).tree
+  t = upsert(t, { id: 'n3', status: 'blocked', blockedOn: 'a verdict' }, T0).tree
+  const back = parseTree(JSON.stringify(t))
+  expect(back).toEqual(t)
+  // A later partial update keeps every other field.
+  const after = upsert(back, { id: 'n4', summary: 'new' }, T0).node
+  expect(after).toEqual({ ...t.nodes[3], summary: 'new', updatedAt: T0 })
+  expect(back.nodes.map(n => n.title)).toEqual(['T goal', 'Moved', 'T depth', 'T range', 'T step'])
+  expect(back.nodes[1].lens).toBe('altitude')
+})
+
+test('a run tracks elapsed time, cost and silence', () => {
+  let t = upsert(emptyTree(), { title: 'Decode', lens: 'step', status: 'exploring', run: { resource: 'VM l4', state: 'running', ratePerHour: 1 } }, T0).tree
+  const t1 = '2026-10-18T02:00:00.000Z'
+  expect(runCost(t.nodes[0].run!, t1)).toEqual({ hours: 2, usd: 2 })
+  expect(silentRuns(t, t1).map(n => n.id)).toEqual(['n1'])
+  t = upsert(t, { id: 'n1', run: { state: 'running' } as never }, t1).tree
+  expect(t.nodes[0].run!.resource).toBe('VM l4')
+  expect(silentRuns(t, '2026-10-18T02:10:00.000Z')).toEqual([])
+  t = upsert(t, { id: 'n1', run: { state: 'failed' } as never }, '2026-10-18T03:00:00.000Z').tree
+  expect(runCost(t.nodes[0].run!, '2026-10-18T09:00:00.000Z')).toEqual({ hours: 3, usd: 3 })
+  expect(silentRuns(t, '2026-10-18T09:00:00.000Z')).toEqual([])
 })

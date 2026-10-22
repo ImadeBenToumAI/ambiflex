@@ -32,6 +32,8 @@ export type TreeNode = {
   unit?: string
   /** For a blocked node: what or whom it waits on. Blocked nodes leave the ETA. */
   blockedOn?: string
+  /** Work running outside the agent (a VM, a container, a CI job, a detached process) for this node. */
+  run?: NodeRun
   /** For a moved node: where it lives now (another tree, project or URL). Moved nodes leave progress. */
   movedTo?: string
   /** A shell command whose exit status re-proves the verification; tree_verify re-runs it. */
@@ -113,4 +115,18 @@ declare module 'claude-code' {
       live: Record<string, LiveActivity>
     }
   }
+}
+
+/** An external run: elapsed time × rate is what makes a forgotten or dead job visible. */
+export type NodeRun = {
+  resource: string
+  kind?: string
+  state: 'running' | 'done' | 'failed' | 'stopped'
+  startedAt?: string
+  endedAt?: string
+  /** Cost per hour while it runs, in dollars. */
+  ratePerHour?: number
+  logUri?: string
+  /** Last sign of life from the run (written by whatever watches it); silence over 15 minutes is flagged. */
+  heartbeatAt?: string
 }

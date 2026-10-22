@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, parseCommits } from '../hooks/register'
+import { VERSION, WHATS_NEW, newerVersion, parseCommits } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -442,4 +442,21 @@ test('/ambiflex routing sets model routing for the project, and the page then ca
   expect(snap.routes?.n1).toMatchObject({ model: 'fable', effort: 'max' })
   const bad = await $.command.run({ command: 'ambiflex', args: 'routing turbo' } as never) as { text: string }
   expect(bad.text).toContain('Unknown mode')
+})
+
+test('an update to an id the tree does not have writes nothing', async ($, on) => {
+  mock.clock(on)
+  bottoms(on)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Track', lens: 'depth' } as never)
+  const r = await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n9', status: 'abandoned', summary: 'x' } as never) as { result?: string }
+  expect(String(r.result ?? r)).toContain('No node n9')
+  const got = await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never) as { result?: string }
+  expect(String(got.result ?? got)).not.toContain('Untitled')
+})
+
+test('newerVersion compares x.y.z', async () => {
+  expect(newerVersion('0.14.0', '0.13.3')).toBe(true)
+  expect(newerVersion('0.13.10', '0.13.9')).toBe(true)
+  expect(newerVersion('0.13.1', '0.13.1')).toBe(false)
+  expect(newerVersion('0.9.0', '0.10.0')).toBe(false)
 })

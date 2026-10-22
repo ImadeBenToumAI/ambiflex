@@ -2,6 +2,18 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.15.0
+
+- **Agent OS brain in 3D.** Three.js with a glow: each ring is a shell around CLAUDE.md, links are curves that bundle toward the centre, and light runs along the links of what was used this week.
+  - Click an element: a panel shows its connections, the tree nodes it served, its last use, and Copy path, Copy open cmd and Fly to.
+  - Light and dark themes; without WebGL the flat rings remain.
+- **The brain is the project's own.** Your user-level `~/.claude` layer (shared by every project) joins only with the `brainUserLevel` option.
+- **Growth as clear charts.** Observable Plot, one question per chart on one time axis: the brain ring by ring, skills and learnings, activity per day.
+- **External runs.** A node can carry `run` (resource, rate per hour, state, heartbeat) for work in a VM, a container or a CI job.
+  - The page shows it with elapsed time and cost, in red when it has been silent for 15 minutes; the plugin says so on the next shell command.
+- **Safer writes.** Updating a node id the tree does not have writes nothing (no more "Untitled" nodes).
+- **Honest updates.** `/ambiflex update` says which version is installed and which one the session runs; `/ambiflex page` never republishes over a newer live page.
+
 ## 0.14.0
 
 - **Sounds on the page.** Eleven short motifs, synthesised in the browser (no audio files), mark what happens in the tree: new node, work starts, agent forks, criterion met or missed, your turn, blocked, node done, track closed, goal reached, week at risk.

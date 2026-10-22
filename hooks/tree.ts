@@ -94,9 +94,18 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
   const acceptance = input.acceptance ?? existing?.acceptance
   const tries = input.iterations ?? existing?.iterations ?? []
   if (status === 'done' && acceptance && !tries[tries.length - 1]?.passed) status = 'review'
+  // A run merges with the one stored: a heartbeat or a state change need not repeat the resource.
+  const run = input.run ? { ...existing?.run, ...stripUndefined(input.run as never) } as TreeNode['run'] : existing?.run
+  if (run && input.run) {
+    run.heartbeatAt = input.run.heartbeatAt ?? now
+    if (run.state === 'running' && !run.startedAt) run.startedAt = now
+    if (run.state !== 'running' && !run.endedAt) run.endedAt = now
+    if (run.state === 'running') delete run.endedAt
+  }
   const node: TreeNode = {
     ...existing,
     ...stripUndefined(input),
+    ...(run ? { run } : {}),
     id: existing?.id ?? input.id ?? nextId(tree),
     title: clip(input.title ?? existing?.title ?? 'Untitled', 80),
     lens,
@@ -557,4 +566,16 @@ export function parseReport(answer: string): { score?: number; result?: string; 
 export function nodeRef(text: string, tree: Tree): string | undefined {
   const ids = [...text.matchAll(/#([A-Za-z0-9_-]+)/g)].map(m => m[1]!)
   return ids.find(id => tree.nodes.some(node => node.id === id))
+}
+
+/** Hours a run has been going (to its end, or to now), and what it cost at its rate. */
+export function runCost(run: NonNullable<TreeNode['run']>, now: string): { hours: number; usd?: number } {
+  const start = Date.parse(run.startedAt ?? ''), end = Date.parse(run.state === 'running' ? now : run.endedAt ?? now)
+  const hours = isNaN(start) || isNaN(end) ? 0 : Math.max(0, (end - start) / 3600e3)
+  return { hours, ...(run.ratePerHour !== undefined ? { usd: +(hours * run.ratePerHour).toFixed(2) } : {}) }
+}
+
+/** Runs still marked running with no sign of life for `minutes`: dead, stuck or forgotten. */
+export function silentRuns(tree: Tree, now: string, minutes = 15): TreeNode[] {
+  return tree.nodes.filter(n => n.run?.state === 'running' && Date.parse(now) - Date.parse(n.run.heartbeatAt ?? n.run.startedAt ?? now) > minutes * 60e3)
 }

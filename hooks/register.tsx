@@ -16,6 +16,8 @@ import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
   merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
+  runCost,
+  silentRuns,
 } from './tree'
 
 const PLUGIN = 'ambiflex'
@@ -72,8 +74,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.14.0'
-export const WHATS_NEW = 'sounds on the page: a short synthesised motif for each event (new node, work starts, agent forks, criterion met or missed, your turn, node done, blocked, track closed, goal reached, week at risk); off until you press Sound, each one playable from the legend. Run /ambiflex page to republish the page.'
+export const VERSION = '0.15.0'
+export const WHATS_NEW = 'Agent OS redrawn in 3D (glowing curved links, click panel), Growth as clear small-multiple charts, external runs with elapsed time, cost and silence alerts, and /ambiflex update tells which version is installed.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -100,6 +102,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 9. Mobile page: ${ARTIFACT_FILE} holds this project's "Ambiflex" claude.ai page ({url, project}). The plugin syncs the tree to it after every change by itself; you do not sync it by hand. Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 11. Scores: when the judge reads lower-is-better (WER, CER, loss, latency, cost), set direction "lower" and the unit ("%", "ms", "$"): ranking and pruning then keep the smallest. Read the stored node echoed by tree_upsert: it is what the user sees.
+13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
@@ -126,6 +129,10 @@ const NODE_SCHEMA = {
     unit: { type: 'string', description: 'Unit of score: "%", "ms", "$"…' },
     model: { type: 'string', description: 'Pin a model for this node (haiku, sonnet, opus, fable); model routing then keeps it. Empty string unpins.' },
     effort: { type: 'string', enum: ['', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Pin a reasoning effort for this node. Empty string unpins.' },
+    run: {
+      type: 'object', description: 'Work running outside you for this node (VM, container, CI job, detached process). Set it when the job starts (state running, resource, ratePerHour), send { state: "running" } again as a heartbeat whenever you check on it, and set done, failed or stopped when it ends. The page shows elapsed time and cost, and flags a run silent for 15 minutes.',
+      properties: { resource: { type: 'string', description: 'What runs: "gcloud VM stt-l4 (europe-west4)", "docker train-asr".' }, kind: { type: 'string' }, state: { type: 'string', enum: ['running', 'done', 'failed', 'stopped'] }, ratePerHour: { type: 'number', description: 'Dollars per hour while it runs.' }, logUri: { type: 'string' } },
+    },
     blockedOn: { type: 'string', description: 'Required with status blocked: what or whom the node waits on (e.g. "native speaker verdict on 12 clips").' },
     movedTo: { type: 'string', description: 'Required with status moved: where the work lives now (another tree, project or URL).' },
     verifyCmd: { type: 'string', description: 'Shell command whose exit status re-proves the verification (exit 0 = still true). tree_verify re-runs it.' },
@@ -317,7 +324,8 @@ async function brainSources($: $): Promise<BrainSource[]> {
   }
   await file('core', 'core', 'CLAUDE.md', `${root}CLAUDE.md`, 'CLAUDE.md')
   const bases: [string, string, string][] = [[root, '', '']]
-  if (home) bases.push([`${home}/`, '~/', 'user '])
+  // The brain is this project's: the user-level ~/.claude layer is shared by every project, so it joins only when asked.
+  if (home && options.brainUserLevel) bases.push([`${home}/`, '~/', 'user '])
   for (const [base, prefix, tag] of bases) {
     for (const e of await list(`${base}.claude/skills`)) {
       if (e.kind !== 'dir' || e.name.startsWith('.')) continue
@@ -562,6 +570,22 @@ async function whatsNew($: $) {
   $.ui.toast(`Ambiflex ${VERSION}: ${WHATS_NEW}`)
 }
 
+/** The version installed on this machine, from Claude Code's plugin registry. */
+async function installedVersion($: $, market: string): Promise<string | undefined> {
+  const home = await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
+  if (!home) return undefined
+  const text = await $.fs.read(`${home}/.claude/plugins/installed_plugins.json`).catch(() => undefined)
+  try { const list = JSON.parse(text ?? '').plugins?.[`ambiflex@${market}`]; return Array.isArray(list) ? list[0]?.version : list?.version } catch { return undefined }
+}
+
+/** True when version a is newer than b (x.y.z). */
+export function newerVersion(a: string, b: string): boolean {
+  const p = (v: string) => v.split(/[.-]/).slice(0, 3).map(n => parseInt(n, 10) || 0)
+  const x = p(a), y = p(b)
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]
+  return false
+}
+
 /**
  * `/ambiflex update`: fetches the marketplace and updates the plugin with the claude CLI, from whichever
  * marketplace it was installed (ambiflex, or imade for the profile repository). The new version runs
@@ -577,13 +601,29 @@ async function selfUpdate($: $): Promise<string> {
     const updated = await run(['claude', 'plugin', 'update', `ambiflex@${market}`])
     const out = `${updated?.stdout ?? ''}${updated?.stderr ?? ''}`
     if (!updated || updated.exitCode !== 0) return `Update failed (ambiflex@${market}): ${out.trim().split('\n').pop() || 'no output'}. In a terminal: ${manual}`
-    if (/already|up to date|latest/i.test(out)) return `Ambiflex ${VERSION} is already the latest from the ${market} marketplace.`
-    return `Ambiflex updated from the ${market} marketplace. Type /reload-plugins to load it in this session (no restart), then /ambiflex page to republish the page.`
+    // Say what is installed, not what this session runs: a newer version may be installed and not yet reloaded.
+    const installed = await installedVersion($, market)
+    const behind = installed && newerVersion(installed, VERSION)
+    if (/already|up to date|latest/i.test(out)) return behind
+      ? `Ambiflex ${installed} is installed and is the latest from the ${market} marketplace; this session still runs ${VERSION}. Type /reload-plugins (in every session open on this project), then /ambiflex page.`
+      : `Ambiflex ${installed ?? VERSION} is already the latest from the ${market} marketplace.`
+    return `Ambiflex ${installed ?? 'the new version'} installed from the ${market} marketplace; this session still runs ${VERSION}. Type /reload-plugins to load it (no restart), in every session open on this project, then /ambiflex page to republish the page.`
   }
   return `No ambiflex or imade marketplace found on this machine. Install: /plugin install ambiflex --marketplace ImadeBenToumAI/ambiflex`
 }
 
 // Long or billable work: GPU and cloud jobs, containers, training runs, detached processes.
+/** Runs marked running with no heartbeat for 15 minutes: said once per half hour, on the next shell command. */
+async function silentRunsNote($: $): Promise<string | undefined> {
+  const c = await ctx($) as { silentAt?: number }
+  if (c.silentAt && Date.now() - c.silentAt < 30 * 60e3) return undefined
+  const t = await read($, tree), now = new Date().toISOString()
+  const quiet = silentRuns(t, now)
+  if (!quiet.length) return undefined
+  c.silentAt = Date.now()
+  return quiet.map(n => { const k = runCost(n.run!, now); return `${n.id} "${n.title}": ${n.run!.resource} marked running for ${k.hours.toFixed(1)} h${k.usd !== undefined ? ` (~$${k.usd})` : ''} with no heartbeat for over 15 minutes` }).join('; ') + '. Check it now: if it ended or failed, stop the resource and set run.state; if it runs, send run { state: "running" } as a heartbeat.'
+}
+
 const LONG_JOB = /\b(gcloud\s+(compute|ai|ml|batch|run)\b[^\n]*\b(create|start|submit|deploy|jobs)|aws\s+(ec2\s+run-instances|sagemaker|batch\s+submit)|az\s+(vm\s+(create|start)|ml\s+job)|docker\s+(run|compose\s+up)|kubectl\s+(apply|run|create)|terraform\s+apply|sbatch|torchrun|accelerate\s+launch|deepspeed|nohup|modal\s+run|python3?\s+\S*train\S*)/i
 
 /**
@@ -596,7 +636,7 @@ async function untracked($: $, command: string, background: boolean): Promise<st
   if (c.blocked) return undefined
   const t = await read($, tree)
   if (!t.nodes.length || t.nodes.some(n => n.status === 'exploring' && n.lens !== 'goal')) return undefined
-  return 'a long or billable job is starting and no node is exploring: create its node (or set it exploring) now, so the tree and the page show what is running.'
+  return 'a long or billable job is starting and no node is exploring: create its node (or set it exploring) now, with run { state: "running", resource, ratePerHour }, so the tree and the page show what is running and what it costs.'
 }
 
 /** The stored node, compactly: the fields the user sees. */
@@ -693,9 +733,9 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   const known = !!url
   const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>", "project": "${name}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
   const ask = known
-    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, republish ${PAGE_FILE} to that same URL with the Artifact tool (read it first), keeping its capabilities, write {"url": "${url}", "project": "${name}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
+    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, read the live page with the Artifact tool and find its PAGE_VERSION = '…' line: if the live page is a newer version than ${VERSION}, do NOT republish it (another session runs a newer Ambiflex; tell me to /reload-plugins here) and only sync the tree. Otherwise republish ${PAGE_FILE} to that same URL, keeping its capabilities, write {"url": "${url}", "project": "${name}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
     : `[tree] Publish the interactive Ambiflex page for the project "${name}". ${publishNew}`
-  return { ask, text: known ? `Asking Claude to republish the interactive page${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : 'Asking Claude to publish the interactive page.' }
+  return { ask, text: known ? `page.html regenerated (${VERSION}); Claude publishes it now${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : `page.html generated (${VERSION}); Claude publishes it now.` }
 }
 
 /** From the panel: a press may submit a prompt (a command may not: it holds the turn). */
@@ -931,6 +971,7 @@ type Options = {
   topModel: string
   planUsd: number
   installPing: boolean
+  brainUserLevel: boolean
   wakeWord: string
   budgetUsd: number
   alertPct: number
@@ -938,7 +979,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -1312,6 +1353,8 @@ ${outline(await read($, tree))}` }
     if (input.status === 'validated') delete input.status
     const before = await read($, tree)
     const isNew = !input.id || !before.nodes.some(n => n.id === input.id)
+    // An update to an id this tree does not have is a mistake (another project's tree, a typo), not a new node.
+    if (input.id && isNew && !input.title) return { result: `No node ${input.id} in this tree (${before.nodes.length} nodes, goal "${before.goal.slice(0, 60)}"). Nothing written. Check the id with tree_get, or give a title to create a new node.` }
     const id = (input.id as string | undefined) ?? nextId(before)
     const after = await commit($, { kind: 'upsert', input: { ...(input as never as object), id } as never, isNew })
     const node = after.nodes.find(n => n.id === id)!
@@ -1498,7 +1541,7 @@ ${outline(await read($, tree))}` }
 
   // Refresh the Git view after a git command.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const nudge = await untracked($, String(e.command ?? ''), !!(e as { run_in_background?: boolean }).run_in_background).catch(() => undefined)
+    const nudge = [await untracked($, String(e.command ?? ''), !!(e as { run_in_background?: boolean }).run_in_background).catch(() => undefined), await silentRunsNote($).catch(() => undefined)].filter(Boolean).join(' ') || undefined
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshGit($).catch(() => undefined)
     if (nudge) {
