@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.18.1
+
+- **Parallel sessions share one tree.** A session opened in a Git worktree now uses the tree and the page of the repository's main checkout (found with `git rev-parse --git-common-dir`), so work split across parallel sessions shows on the project's page instead of in an invisible tree of its own. The main checkout and its sub-folders keep their tree as before.
+- Each write builds on the shared log on disk, so nodes that other sessions logged are kept.
+
 ## 0.18.0
 
 - **Local page** (`/ambiflex local`, `/ambiflex local stop`): the plugin starts a small server on `127.0.0.1` and gives you a private link (`http://127.0.0.1:PORT/?k=KEY`). The page reads the session's tree, live activity, tasks and agents straight from disk every second, with no claude.ai publish and no ArtifactData permission. Install it as a browser app to keep it beside Claude.

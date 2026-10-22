@@ -78,7 +78,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.18.0'
+export const VERSION = '0.18.1'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -156,8 +156,29 @@ type $ = EngineInterface
  * sub-folders does (a cloud session that clones several repositories side by side), that sub-folder.
  * Without it, a session rooted above the repository started a second, empty tree beside the real one.
  */
+/**
+ * A Git worktree's sessions use the tree of the repository's main checkout: --git-common-dir names the
+ * same .git folder from every worktree, so parallel sessions share one tree and one page instead of
+ * each starting its own, invisible one.
+ */
+async function mainCheckout($: $, r: string): Promise<string | undefined> {
+  const out = await $.process.run(['git', 'rev-parse', '--git-dir', '--git-common-dir'], { cwd: r, timeoutMs: 5000 }).catch(() => undefined)
+  const [own, dir] = out && out.exitCode === 0 ? out.stdout.trim().split('\n').map(x => x.trim()) : []
+  // Only a linked worktree has its own git dir apart from the common one; the main checkout keeps its tree.
+  const norm = (d: string) => {
+    const parts: string[] = []
+    for (const p of (d.startsWith('/') ? d : `${r}/${d}`).split('/')) { if (p === '..') parts.pop(); else if (p && p !== '.') parts.push(p) }
+    return `/${parts.join('/')}`
+  }
+  if (!own || !dir || !dir.endsWith('.git') || norm(own) === norm(dir)) return undefined
+  const top = norm(dir).replace(/\/\.git$/, '')
+  return top === r ? undefined : `${top}/`
+}
+
 async function resolveRoot($: $): Promise<string> {
   const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
+  const main = r ? await mainCheckout($, r) : undefined
+  if (main) return main
   const base = r ? `${r}/` : ''
   if (await $.fs.exists(`${base}${LOG_FILE}`).catch(() => false)) return base
   const entries = await $.fs.list(r || undefined).catch(() => [] as { name: string; kind: string }[])
@@ -240,11 +261,15 @@ async function projectName($: $): Promise<string> {
 async function commit($: $, event: Omit<Event, 't' | 's'>): Promise<Tree> {
   const guard = await ctx($)
   if (guard.blocked) throw new Error(guard.warning)
-  const t = await read($, tree)
+  const mine = await read($, tree)
   const full = { ...event, t: await nowIso($), s: (await ctx($)).sid } as Event
-  const applied = applyOn(t, full)
   const had = await $.fs.exists((await LOG($))).catch(() => false)
   const prior = had ? (await $.fs.read((await LOG($))).catch(() => '')) as string : ''
+  // Other sessions (worktrees of the same repository) append to this log too: build on what is on disk.
+  // Snapshot-only fields (cost, a node's agent) come from this session's tree.
+  const disk = prior ? replay(parseLog(prior)) : undefined
+  const t = disk ? { ...disk, cost: mine.cost, nodes: disk.nodes.map(n => ({ ...mine.nodes.find(m => m.id === n.id), ...n })) } : mine
+  const applied = applyOn(t, full)
   await $.fs.write((await LOG($)), `${prior}${prior && !prior.endsWith('\n') ? '\n' : ''}${JSON.stringify(full)}\n`)
   if (!had) await $.fs.write((await ATTRS($)), 'log.jsonl merge=union\n').catch(() => undefined)
   await save($, applied)

@@ -538,3 +538,20 @@ test('local page: documents are kept on disk, and its buttons reach the session 
   expect(prompts).toEqual(['[tree] Take altitude\n\n[tree] Accept p1'])
   expect(files.get(q)).toBe('')
 })
+
+test('a session in a Git worktree uses the tree of the main checkout, and keeps what other sessions logged', async ($, on) => {
+  mock.clock(on)
+  const other = JSON.stringify({ t: '2026-10-01T00:00:00Z', s: 'other', kind: 'upsert', input: { id: 'n1', title: 'From the other session', lens: 'step' } }) + '\n'
+  const disk = new Map<string, string>([['/repo/.ambiflex/log.jsonl', other]])
+  bottoms(on, [], disk, '/repo/.claude/worktrees/w1', () => 'session_w', argv => argv[1] === 'rev-parse' && argv[2] === '--git-dir'
+    ? { exitCode: 0, stdout: '/repo/.git/worktrees/w1\n/repo/.git\n', stderr: '' } : { exitCode: 1, stdout: '', stderr: '' })
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  await $.session.start({ source: 'startup', cwd: '/repo/.claude/worktrees/w1' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'From the worktree', lens: 'step' } as never)
+  expect([...disk.keys()].some(k => k.includes('/worktrees/w1/.ambiflex/'))).toBe(false)
+  const snap = JSON.parse(disk.get('/repo/.ambiflex/tree.json')!)
+  expect(snap.nodes.map((n: any) => n.title)).toEqual(['From the other session', 'From the worktree'])
+})
