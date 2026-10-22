@@ -18,6 +18,7 @@ import {
   merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
+  addReview, decide, proofScore, blockers, altitudeBrief,
 } from './tree'
 
 const PLUGIN = 'ambiflex'
@@ -74,8 +75,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.15.0'
-export const WHATS_NEW = 'Agent OS redrawn in 3D (glowing curved links, click panel), Growth as clear small-multiple charts, external runs with elapsed time, cost and silence alerts, and /ambiflex update tells which version is installed.'
+export const VERSION = '0.16.0'
+export const WHATS_NEW = 'Proof next to progress: what is shown toward the goal, and what blocks it. Take altitude: the strongest model reviews the whole plan and proposes changes you accept or refuse (/ambiflex altitude).'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -102,6 +103,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 9. Mobile page: ${ARTIFACT_FILE} holds this project's "Ambiflex" claude.ai page ({url, project}). The plugin syncs the tree to it after every change by itself; you do not sync it by hand. Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 11. Scores: when the judge reads lower-is-better (WER, CER, loss, latency, cost), set direction "lower" and the unit ("%", "ms", "$"): ranking and pruning then keep the smallest. Read the stored node echoed by tree_upsert: it is what the user sees.
+14. Proof and altitude: progress counts finished work; proof counts what is shown toward the goal (validated by the user, a criterion met with a replayable proof, a verification). When proof stalls, a critical node keeps missing, or the user asks to step back, take altitude (tree_altitude): the strongest model reviews the whole plan and proposes changes, which the user accepts or refuses (tree_review_decide); never apply them yourself.
 13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
@@ -219,7 +221,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, ...((await routingMode($)) !== 'off' ? { routing: await routingMode($), routes: routes(next, await routingCap($)) } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), ...((await routingMode($)) !== 'off' ? { routing: await routingMode($), routes: routes(next, await routingCap($)) } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   if (await artifactUrl($, true)) await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
@@ -260,6 +262,8 @@ function applyOn(t: Tree, e: Event): Tree {
         turns: e.turns ?? (e.on && e.turns === undefined ? 0 : t.auto.turns),
       },
     }
+    case 'review': return addReview(t, e.review)
+    case 'decide': return decide(t, e.review, e.ids, e.accept, e.t)
   }
 }
 
@@ -717,6 +721,44 @@ async function countTurn($: $) {
   const t = await read($, tree).catch(() => undefined)
   if (!t?.auto.on) return
   await commit($, { kind: 'auto', on: true, turns: t.auto.turns + 1 }).catch(() => undefined)
+}
+
+/** When proof stalls for 8 turns while work goes on, or a critical node misses its criterion twice, suggest taking altitude (once per 2 hours). */
+async function stallCheck($: $) {
+  const c = await ctx($) as { proofs?: number[]; altitudeAt?: number }
+  const t = await read($, tree)
+  if (!t.nodes.length) return
+  const p = proofScore(t).pct
+  c.proofs = [...(c.proofs ?? []), p].slice(-8)
+  if (c.altitudeAt && Date.now() - c.altitudeAt < 2 * 3600e3) return
+  const stalled = c.proofs.length >= 8 && c.proofs.every(x => x === p) && t.nodes.some(n => n.status === 'exploring')
+  const missed = t.nodes.find(n => (n.weight ?? 1) >= 4 && n.status !== 'abandoned' && (n.iterations ?? []).filter(i => !i.passed).length >= 2 && !n.iterations![n.iterations!.length - 1].passed)
+  if (!stalled && !missed) return
+  c.altitudeAt = Date.now()
+  $.ui.toast(stalled ? `Proof has stayed at ${p} % for 8 turns: /ambiflex altitude for a step back.` : `${missed!.id} "${missed!.title}" missed its criterion twice: /ambiflex altitude for a step back.`)
+}
+
+/**
+ * `/ambiflex altitude`: a step back over the whole plan. The strongest model reads the goal, every node, every
+ * result and what blocks the proof, then proposes changes; the user accepts or refuses each one.
+ */
+async function altitudeRequest($: $): Promise<{ ask: string; text: string }> {
+  await load($)
+  const t = await read($, tree)
+  if (!t.nodes.length) return { ask: '[tree] There is no tree yet: tell the user to set a goal first.', text: 'No tree yet.' }
+  const p = proofScore(t)
+  const top = (await topModelOf($)) || 'fable'
+  const brief = altitudeBrief(t, new Date().toISOString())
+  const ask = `[tree] Take altitude on this plan. Spawn ONE Agent (subagent_type "general-purpose", model "${top}", description "Take altitude: strategy review") with the brief below, and ask it to think at full effort and return ONLY a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary}, "why": "...", "gain": proof points}. Its instructions:
+- Apply the be-ambitious method: Altitude (the durable outcome behind the goal), Depth (what the best expert would do, with which tools and which external judge), Range (which other disciplines).
+- Read the results, not the plan: which assumptions did the results refute, which tracks stall (several missed attempts, estimates far exceeded), what the goal needs that no node covers, which tracks have no measurable criterion.
+- Propose at most 12 changes, the ones that raise the proof the most: new nodes (each with an acceptance criterion and a judge), reordering (seq) and re-weighting, sharper or corrected criteria, tracks to abandon with the reason. Every change cites the result that calls for it and estimates its proof gain. Keep node titles under 40 characters, stating a finding or a target.
+- Do not apply anything and do not call tree tools.
+Then call tree_review_submit with its diagnosis, by "${top}", and its proposals, tell me the diagnosis in at most 6 lines and the 3 proposals with the largest gain, and say I can accept or refuse each one on the page or by telling you.
+
+BRIEF
+${brief}`
+  return { ask, text: `Taking altitude: ${top} reviews the whole plan (proof ${p.pct} %, progress ${p.progressPct} %). Its proposals will wait for your decision.` }
 }
 
 /**
@@ -1226,6 +1268,31 @@ export const register: Register = (on, opts) => {
       ['tree_verify', 'Re-runs the verifyCmd of finished nodes (or of one node) through the Bash tool, under your permission settings, and records which proofs still pass.', {
         type: 'object', properties: { id: { type: 'string', description: 'One node; omitted, every node that has a verifyCmd.' } },
       }],
+      ['tree_altitude', 'Takes altitude: returns the brief and the steps for a strategy review of the whole plan by the strongest model (what /ambiflex altitude does). Follow the steps it returns.', { type: 'object', properties: {} }],
+      ['tree_review_submit', 'Records a strategy review (from /ambiflex altitude): the diagnosis and the proposed changes. Nothing is applied: the user accepts or refuses each proposal.', {
+        type: 'object',
+        properties: {
+          diagnosis: { type: 'string', description: 'What the results say: what works, what stalls, which assumptions the results refuted, what the goal still lacks. Plain prose, at most ~12 lines.' },
+          by: { type: 'string', description: 'Who reviewed (model), e.g. "fable".' },
+          proposals: {
+            type: 'array', items: {
+              type: 'object', properties: {
+                kind: { type: 'string', enum: ['add', 'update', 'abandon'] },
+                node: { type: 'string', description: 'The node changed (update, abandon).' },
+                fields: { type: 'object', description: 'Node fields to write: title, lens, parents (node ids, or ids of earlier proposals such as p1), weight, seq, acceptance, judge, estimate, summary, blockedOn…' },
+                why: { type: 'string', description: 'Why, citing the result that calls for it.' },
+                gain: { type: 'number', description: 'Proof points it should add toward the goal.' },
+              }, required: ['kind', 'why'],
+            },
+          },
+        },
+        required: ['diagnosis', 'proposals'],
+      }],
+      ['tree_review_decide', 'Accepts or refuses proposals of a strategy review; accepted ones become changes to the tree.', {
+        type: 'object',
+        properties: { review: { type: 'string', description: 'Review id (r1…); omitted, the latest.' }, ids: { type: 'array', items: { type: 'string' }, description: 'Proposal ids (p1…), or ["all"].' }, accept: { type: 'boolean' } },
+        required: ['ids', 'accept'],
+      }],
       ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
         type: 'object',
         properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' } },
@@ -1253,6 +1320,7 @@ export const register: Register = (on, opts) => {
 ${outline(await read($, tree))}` }
     if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
     if (verb === 'update') return { text: await selfUpdate($) }
+    if (verb === 'altitude') { const r = await altitudeRequest($); return { text: r.text, context: [r.ask] } }
     if (verb === 'backfill') return { text: await backfill($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
     await load($)
@@ -1320,6 +1388,7 @@ ${outline(await read($, tree))}` }
       return ran
     }
     await trackCost($).catch(() => undefined)
+    await stallCheck($).catch(() => undefined)
     const c = await ctx($)
     if (c.compactDue) {
       c.compactDue = false
@@ -1423,6 +1492,29 @@ ${outline(await read($, tree))}` }
 
   // Proofs that can be replayed: each verifyCmd runs through the Bash tool, so the user's permission
   // rules apply to it like to any other command (a tree from elsewhere cannot run anything silently).
+  on('tool.call', { tool: 'mcp__ambiflex__tree_altitude' }, async ($) => ({ result: (await altitudeRequest($)).ask.replace(/^\[tree\] /, '') }))
+  on('tool.call', { tool: 'mcp__ambiflex__tree_review_submit' }, async ($, e) => {
+    const raw = e as unknown as { diagnosis?: string; by?: string; proposals?: { kind?: string; node?: string; fields?: Record<string, unknown>; why?: string; gain?: number }[] }
+    const t = await read($, tree)
+    const id = `r${(t.reviews ?? []).reduce((k, r) => Math.max(k, parseInt(r.id.slice(1), 10) || 0), 0) + 1}`
+    const proposals = (raw.proposals ?? []).filter(p => ['add', 'update', 'abandon'].includes(String(p.kind)) && p.why).slice(0, 20)
+      .map((p, i) => ({ id: `p${i + 1}`, kind: p.kind as 'add' | 'update' | 'abandon', ...(p.node ? { node: p.node } : {}), fields: p.fields ?? {}, why: String(p.why), ...(typeof p.gain === 'number' ? { gain: p.gain } : {}) }))
+    const review = { id, at: await nowIso($), by: raw.by ?? 'Claude', diagnosis: String(raw.diagnosis ?? '').slice(0, 4000), proofBefore: proofScore(t).pct, proposals }
+    await commit($, { kind: 'review', review })
+    $.ui.toast(`Strategy review ${id}: ${proposals.length} proposals to accept or refuse`)
+    return { result: `Review ${id} recorded with ${proposals.length} proposals (${proposals.map(p => `${p.id} ${p.kind}${p.node ? ' ' + p.node : ''}`).join(', ')}). Nothing is applied yet: the user accepts or refuses each one on the page or here (tree_review_decide).` }
+  })
+  on('tool.call', { tool: 'mcp__ambiflex__tree_review_decide' }, async ($, e) => {
+    const raw = e as unknown as { review?: string; ids?: string[]; accept?: boolean }
+    const t = await read($, tree)
+    const r = raw.review ? (t.reviews ?? []).find(x => x.id === raw.review) : (t.reviews ?? []).slice(-1)[0]
+    if (!r) return { result: 'No strategy review yet: run /ambiflex altitude.' }
+    const ids = Array.isArray(raw.ids) && raw.ids.length ? raw.ids : ['all']
+    const before = proofScore(t).pct
+    const after = await commit($, { kind: 'decide', review: r.id, ids, accept: !!raw.accept })
+    const done = (after.reviews ?? []).find(x => x.id === r.id)!.proposals.filter(p => ids.includes('all') || ids.includes(p.id))
+    return { result: `${r.id}: ${done.map(p => `${p.id} ${p.decided ?? 'undecided'}`).join(', ')}. Proof ${before} % → ${proofScore(after).pct} %.\n${outline(after)}` }
+  })
   on('tool.call', { tool: 'mcp__ambiflex__tree_verify' }, async ($, e) => {
     const { id } = e as unknown as { id?: string }
     const t = await read($, tree)

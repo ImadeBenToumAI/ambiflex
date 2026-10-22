@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { iterate, runCost, silentRuns, parseTree, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -259,4 +259,41 @@ test('a run tracks elapsed time, cost and silence', () => {
   t = upsert(t, { id: 'n1', run: { state: 'failed' } as never }, '2026-10-18T03:00:00.000Z').tree
   expect(runCost(t.nodes[0].run!, '2026-10-18T09:00:00.000Z')).toEqual({ hours: 3, usd: 3 })
   expect(silentRuns(t, '2026-10-18T09:00:00.000Z')).toEqual([])
+})
+
+test('proof weighs each node by the strength of its proof; blockers say what stands in the way', () => {
+  let t = { ...emptyTree(), goal: 'STT under 30 % WER' }
+  t = upsert(t, { title: 'Goal', lens: 'goal' }, T0).tree
+  t = upsert(t, { title: 'Ship the model', lens: 'altitude', parents: ['n1'], weight: 5 }, T0).tree                               // n2: no criterion anywhere below
+  t = upsert(t, { title: 'Corpus', lens: 'step', parents: ['n2'], status: 'validated', verification: 'ok', weight: 2 }, T0).tree   // n3: 100 %
+  t = upsert(t, { title: 'Fine-tune', lens: 'step', parents: ['n2'], weight: 4, acceptance: 'WER < 30 %', status: 'exploring', iterations: [{ n: 1, result: 'WER 41 %', passed: false, at: T0 }] }, T0).tree // n4
+  t = upsert(t, { title: 'Docs', lens: 'step', parents: ['n2'], status: 'done', verification: 'written', weight: 1 }, T0).tree     // n5: 60 %
+  t = upsert(t, { title: 'Speaker verdict', lens: 'step', parents: ['n2'], status: 'blocked', blockedOn: 'native speaker', weight: 3 }, T0).tree // n6
+  const p = proofScore(t)
+  // weights 5 + 2 + 4 + 1 + 3 = 15; proven 2 × 1 + 1 × 0.6 = 2.6 → 17 %; progress (2 + 1) / 15 = 20 %
+  expect(p.pct).toBe(17)
+  expect(p.progressPct).toBe(20)
+  const b = blockers(t, T0)
+  expect(b.map(x => `${x.id}:${x.kind}`)).toEqual(['n4:missed', 'n6:blocked'])
+  // n2 is measured through n4's acceptance criterion.
+  t = upsert(t, { id: 'n4', acceptance: '' as never }, T0).tree
+  expect(blockers(t, T0).some(x => x.kind === 'unmeasurable' && x.id === 'n2')).toBe(true)
+  expect(altitudeBrief(t, T0)).toContain('PROOF: 17 %')
+})
+
+test('a review waits for the user; accepted proposals become nodes, refused ones change nothing', () => {
+  let t = upsert({ ...emptyTree(), goal: 'G' }, { title: 'Track', lens: 'depth' }, T0).tree
+  t = addReview(t, { id: 'r1', at: T0, by: 'fable', diagnosis: 'd', proofBefore: 0, proposals: [
+    { id: 'p1', kind: 'add', fields: { title: 'New track', lens: 'depth', weight: 4, acceptance: 'x' }, why: 'w' },
+    { id: 'p2', kind: 'add', fields: { title: 'Its step', lens: 'step', parents: ['p1'] }, why: 'w' },
+    { id: 'p3', kind: 'abandon', node: 'n1', fields: {}, why: 'refuted' },
+  ] })
+  expect(t.nodes.length).toBe(1)
+  t = decide(t, 'r1', ['p3'], false, T0)
+  expect(t.nodes[0].status).toBe('proposed')
+  t = decide(t, 'r1', ['all'], true, T0)
+  expect(t.nodes.map(n => n.title)).toEqual(['Track', 'New track', 'Its step'])
+  expect(t.nodes[2].parents).toEqual(['n2'])
+  expect(t.reviews![0].proposals.map(p => p.decided)).toEqual(['accepted', 'accepted', 'refused'])
+  expect(parseTree(JSON.stringify(t)).reviews).toEqual(t.reviews)
 })

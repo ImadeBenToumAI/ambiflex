@@ -2,6 +2,16 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.16.0
+
+- **Proof next to progress.** The page shows two numbers: "done" (the work finished) and "proven" (what is actually shown toward the goal).
+  - Each node counts by the strength of its proof: validated by you 100 %, criterion met with a replayable proof 90 %, verified in text 60 %, in review 30 %, otherwise 0; weighted by importance.
+- **What blocks the goal.** A band lists the real blockers, ranked by the proof they hold back: nodes waiting on someone, critical nodes missing their criterion, proofs that no longer pass, silent runs, and Altitude tracks with no measurable criterion.
+- **Take altitude.** `/ambiflex altitude`, the `tree_altitude` tool or the page button: the strongest model (Fable by default) reviews the whole plan (goal, nodes, results, attempts, proof, blockers) with the Altitude, Depth and Range method.
+  - It returns a diagnosis and up to 12 proposals (new nodes with criteria, reordering, re-weighting, corrected criteria, tracks to drop), each with its reason and expected proof gain.
+  - Nothing is applied by itself: you accept or refuse each proposal on the page or in the conversation.
+  - The plugin suggests a review when proof stays flat for 8 turns while work goes on, or when a critical node misses its criterion twice.
+
 ## 0.15.0
 
 - **Agent OS brain in 3D.** Three.js with a glow: each ring is a shell around CLAUDE.md, links are curves that bundle toward the centre, and light runs along the links of what was used this week.

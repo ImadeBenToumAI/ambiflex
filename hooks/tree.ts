@@ -1,4 +1,4 @@
-import type { Auto, Cost, Lens, Status, Tree, TreeNode } from '../types'
+import type { Proposal, Review, Auto, Cost, Lens, Status, Tree, TreeNode } from '../types'
 
 export const LENSES: Lens[] = ['goal', 'altitude', 'depth', 'range', 'step']
 export const STATUSES: Status[] = ['proposed', 'exploring', 'review', 'blocked', 'done', 'validated', 'merged', 'abandoned', 'moved']
@@ -64,6 +64,7 @@ export function parseTree(text: string | undefined): Tree {
       nodes: Array.isArray(raw.nodes) ? raw.nodes : [],
       auto: { ...DEFAULT_AUTO, ...(raw.auto ?? {}) },
       cost: { ...DEFAULT_COST, ...(raw.cost ?? {}) },
+      ...(Array.isArray(raw.reviews) && raw.reviews.length ? { reviews: raw.reviews } : {}),
     }
   } catch {
     return emptyTree()
@@ -578,4 +579,113 @@ export function runCost(run: NonNullable<TreeNode['run']>, now: string): { hours
 /** Runs still marked running with no sign of life for `minutes`: dead, stuck or forgotten. */
 export function silentRuns(tree: Tree, now: string, minutes = 15): TreeNode[] {
   return tree.nodes.filter(n => n.run?.state === 'running' && Date.parse(now) - Date.parse(n.run.heartbeatAt ?? n.run.startedAt ?? now) > minutes * 60e3)
+}
+
+// ---------- Proof: how much of the goal is shown, not how much work is done ----------
+// Progress counts finished nodes; proof counts what each node proves, by the strength of that proof,
+// weighted by how much the goal depends on the node. A project can be 70 % done and 30 % proven.
+
+export type ProofLevel = 'validated' | 'replays' | 'verified' | 'review' | 'failing' | 'none'
+export const PROOF_VALUE: Record<ProofLevel, number> = { validated: 1, replays: 0.9, verified: 0.6, review: 0.3, failing: 0, none: 0 }
+export const PROOF_LABEL: Record<ProofLevel, string> = { validated: 'validated by you', replays: 'criterion met, proof replays', verified: 'verified (text)', review: 'in review', failing: 'proof no longer passes', none: 'not proven yet' }
+
+const counted = (n: TreeNode) => n.lens !== 'goal' && n.status !== 'abandoned' && n.status !== 'moved'
+
+/** The strength of what one node proves. */
+export function proofLevel(n: TreeNode): ProofLevel {
+  if (n.verifyOk === false) return 'failing'
+  if (n.status === 'validated') return 'validated'
+  if (n.status === 'done' || n.status === 'merged') {
+    const tries = n.iterations ?? []
+    const met = n.acceptance ? !!tries[tries.length - 1]?.passed : true
+    if (met && n.verifyCmd && n.verifyOk !== false) return 'replays'
+    return n.verification ? 'verified' : 'review'
+  }
+  return n.status === 'review' ? 'review' : 'none'
+}
+
+export type Proof = { pct: number; progressPct: number; items: { id: string; title: string; weight: number; level: ProofLevel }[] }
+
+export function proofScore(tree: Tree): Proof {
+  const live = tree.nodes.filter(counted)
+  const w = (n: TreeNode) => n.weight ?? 1
+  const all = live.reduce((k, n) => k + w(n), 0)
+  const items = live.map(n => ({ id: n.id, title: n.title, weight: w(n), level: proofLevel(n) }))
+  const pct = all ? Math.round(items.reduce((k, x) => k + x.weight * PROOF_VALUE[x.level], 0) / all * 100) : 0
+  const progressPct = all ? Math.round(live.filter(n => FINISHED.includes(n.status)).reduce((k, n) => k + w(n), 0) / all * 100) : 0
+  return { pct, progressPct, items }
+}
+
+export type Blocker = { id: string; title: string; kind: 'blocked' | 'missed' | 'failing' | 'silent' | 'unmeasurable'; why: string; points: number }
+
+/** What stands between the tree and its goal, largest first: points are the proof each would add if cleared. */
+export function blockers(tree: Tree, now: string): Blocker[] {
+  const live = tree.nodes.filter(counted)
+  const all = live.reduce((k, n) => k + (n.weight ?? 1), 0) || 1
+  const pts = (n: TreeNode) => Math.round((n.weight ?? 1) * (1 - PROOF_VALUE[proofLevel(n)]) / all * 1000) / 10
+  const out: Blocker[] = []
+  const children = (id: string) => live.filter(n => n.parents.includes(id))
+  const measured = (n: TreeNode, seen = new Set<string>()): boolean => {
+    if (seen.has(n.id)) return false
+    seen.add(n.id)
+    return !!(n.acceptance || n.judge || n.verifyCmd) || children(n.id).some(c => measured(c, seen))
+  }
+  for (const n of live) {
+    if (FINISHED.includes(n.status) && n.verifyOk !== false) continue
+    const tries = n.iterations ?? []
+    if (n.status === 'blocked') out.push({ id: n.id, title: n.title, kind: 'blocked', why: `waits on ${n.blockedOn ?? 'something outside'}`, points: pts(n) })
+    else if (n.verifyOk === false) out.push({ id: n.id, title: n.title, kind: 'failing', why: 'its replayed proof no longer passes', points: pts(n) })
+    else if ((n.weight ?? 1) >= 4 && tries.length && !tries[tries.length - 1].passed) out.push({ id: n.id, title: n.title, kind: 'missed', why: `${tries.filter(t => !t.passed).length} attempt(s) short of "${n.acceptance ?? 'its criterion'}"; last: ${tries[tries.length - 1].result}`, points: pts(n) })
+    if (n.lens === 'altitude' && !measured(n)) out.push({ id: n.id, title: n.title, kind: 'unmeasurable', why: 'no acceptance criterion, judge or replayable proof on this track or below it: the goal cannot be shown here', points: pts(n) })
+  }
+  for (const n of silentRuns(tree, now)) out.push({ id: n.id, title: n.title, kind: 'silent', why: `${n.run!.resource} marked running with no sign of life for over 15 minutes`, points: pts(n) })
+  return out.sort((a, b) => b.points - a.points)
+}
+
+// ---------- Taking altitude: a strategy review proposes changes; the user decides each one ----------
+
+/** Records a review; its proposals wait for the user. */
+export function addReview(tree: Tree, review: Review): Tree {
+  return { ...tree, reviews: [...(tree.reviews ?? []), review].slice(-10) }
+}
+
+/** Accepts or refuses proposals of a review ("all" for every undecided one); accepted ones become tree changes. */
+export function decide(tree: Tree, reviewId: string, ids: string[], accept: boolean, now: string): Tree {
+  const r = (tree.reviews ?? []).find(x => x.id === reviewId)
+  if (!r) return tree
+  const pick = (p: Proposal) => !p.decided && (ids.includes('all') || ids.includes(p.id))
+  let t = tree
+  const made = new Map<string, string>()   // proposal id → node id it created, so later proposals may name it as a parent
+  for (const p of r.proposals) {
+    if (!pick(p) || !accept) continue
+    const f = { ...(p.fields as NodeInput) }
+    if (f.parents) f.parents = f.parents.map(x => made.get(x) ?? x)
+    if (p.kind === 'add') { delete f.id; const res = upsert(t, f, now); t = res.tree; made.set(p.id, res.node.id) }
+    else if (p.node && t.nodes.some(n => n.id === p.node)) t = upsert(t, p.kind === 'abandon' ? { id: p.node, status: 'abandoned', summary: f.summary ?? p.why } : { ...f, id: p.node }, now).tree
+  }
+  const reviews = (t.reviews ?? []).map(x => x.id !== reviewId ? x : { ...x, proposals: x.proposals.map(p => pick(p) ? { ...p, decided: accept ? 'accepted' as const : 'refused' as const } : p) })
+  return { ...t, reviews }
+}
+
+/** The brief for the reviewer: the method, the whole tree with its results, the proof and what blocks it. */
+export function altitudeBrief(tree: Tree, now: string): string {
+  const p = proofScore(tree), b = blockers(tree, now)
+  const results = tree.nodes.filter(n => n.lens !== 'goal').map(n => {
+    const parts = [`${n.id} [${n.lens} · ${n.status} · weight ${n.weight ?? 1}${n.seq ? ` · seq ${n.seq}` : ''}] ${n.title}`]
+    if (n.headline) parts.push(`  finding: ${n.headline}`)
+    if (n.acceptance) parts.push(`  acceptance: ${n.acceptance}`)
+    if (n.judge) parts.push(`  judge: ${n.judge}${n.score !== undefined ? ` · score ${n.score}${n.unit ?? ''} (${n.direction ?? 'higher'} is better)` : ''}`)
+    for (const it of (n.iterations ?? []).slice(-4)) parts.push(`  try ${it.n}: ${it.passed ? 'passed' : 'missed'}: ${it.result}`)
+    if (n.verification) parts.push(`  proof: ${n.verification}`)
+    if (n.blockedOn) parts.push(`  blocked on: ${n.blockedOn}`)
+    if (n.summary) parts.push(`  summary: ${n.summary.slice(0, 300)}`)
+    if (n.estimate) parts.push(`  estimate ${n.estimate}${n.startedAt ? `, started ${n.startedAt.slice(0, 10)}` : ''}${n.finishedAt ? `, finished ${n.finishedAt.slice(0, 10)}` : ''}`)
+    return parts.join('\n')
+  }).join('\n')
+  return [
+    `GOAL: ${tree.goal || '(none set)'}`,
+    `PROOF: ${p.pct} % of the goal is shown (progress ${p.progressPct} % of the work is done). Proof weighs each node by importance and by the strength of its proof: validated by the user 100 %, criterion met with a replayable proof 90 %, verified in text 60 %, in review 30 %, otherwise 0.`,
+    `BLOCKERS (proof points each would add):\n${b.map(x => `- ${x.id} ${x.title} [${x.kind}, ${x.points} pts]: ${x.why}`).join('\n') || '- none detected'}`,
+    `NODES AND RESULTS:\n${results || '(no nodes)'}`,
+  ].join('\n\n')
 }

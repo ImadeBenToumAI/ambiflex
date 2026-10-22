@@ -460,3 +460,17 @@ test('newerVersion compares x.y.z', async () => {
   expect(newerVersion('0.13.1', '0.13.1')).toBe(false)
   expect(newerVersion('0.9.0', '0.10.0')).toBe(false)
 })
+
+test('/ambiflex altitude briefs the strongest model; a review is recorded, then decided', async ($, on) => {
+  mock.clock(on)
+  bottoms(on)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Track', lens: 'altitude', weight: 5 } as never)
+  const r = await $.command.run({ command: 'ambiflex', args: 'altitude' } as never) as { text?: string; context?: string[] }
+  expect(String(r.text)).toContain('Taking altitude')
+  expect(String(r.context?.[0])).toContain('model "fable"')
+  expect(String(r.context?.[0])).toContain('PROOF: 0 %')
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_review_submit', diagnosis: 'No criterion.', by: 'fable', proposals: [{ kind: 'update', node: 'n1', fields: { acceptance: 'WER < 30 %' }, why: 'unmeasurable', gain: 10 }] } as never)
+  const d = await $.tool.call({ tool: 'mcp__ambiflex__tree_review_decide', ids: ['p1'], accept: true } as never) as { result?: string }
+  expect(String(d.result)).toContain('p1 accepted')
+})

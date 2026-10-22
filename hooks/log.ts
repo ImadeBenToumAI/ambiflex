@@ -1,5 +1,5 @@
-import type { Tree } from '../types'
-import { DEFAULT_AUTO, DEFAULT_COST, emptyTree, merge, upsert } from './tree'
+import type { Review, Tree } from '../types'
+import { DEFAULT_AUTO, DEFAULT_COST, addReview, decide, emptyTree, merge, upsert } from './tree'
 import type { NodeInput } from './tree'
 
 /**
@@ -11,6 +11,8 @@ export type Event =
   | { t: string; s: string; kind: 'upsert'; input: NodeInput; isNew?: boolean }
   | { t: string; s: string; kind: 'merge'; sources: string[]; into: string }
   | { t: string; s: string; kind: 'auto'; on: boolean; maxTurns?: number; turns?: number }
+  | { t: string; s: string; kind: 'review'; review: Review }
+  | { t: string; s: string; kind: 'decide'; review: string; ids: string[]; accept: boolean }
 
 export const LOG_FILE = '.ambiflex/log.jsonl'
 
@@ -84,6 +86,12 @@ export function replay(events: Event[]): Tree {
             turns: e.turns ?? (e.on && e.turns === undefined ? 0 : tree.auto.turns),
           },
         }
+        break
+      case 'review':
+        tree = addReview(tree, e.review)
+        break
+      case 'decide':
+        tree = decide(tree, e.review, e.ids, e.accept, e.t)
         break
     }
   }

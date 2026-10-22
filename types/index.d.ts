@@ -78,7 +78,24 @@ export type Cost = {
   rateLimits: { kind: string; percentUsed: number; resetsAt?: string }[]
 }
 
-export type Tree = { version: 1; goal: string; nodes: TreeNode[]; auto: Auto; cost: Cost }
+export type Tree = { version: 1; goal: string; nodes: TreeNode[]; auto: Auto; cost: Cost; reviews?: Review[] }
+
+/** One change a strategy review proposes; nothing applies until the user accepts it. */
+export type Proposal = {
+  id: string
+  kind: 'add' | 'update' | 'abandon'
+  /** The node it changes (update, abandon). */
+  node?: string
+  /** The node fields to write: title, lens, parents, weight, seq, acceptance, judge, summary… */
+  fields: Record<string, unknown>
+  why: string
+  /** Proof points the change should add toward the goal, by the reviewer's estimate. */
+  gain?: number
+  decided?: 'accepted' | 'refused'
+}
+
+/** A step back over the whole tree: what the results say, and the changes that follow. */
+export type Review = { id: string; at: string; by: string; diagnosis: string; proofBefore: number; proposals: Proposal[] }
 
 /** What one running loop does right now: the main loop ("main") or a subagent, on the node it serves. */
 export type LiveActivity = {
