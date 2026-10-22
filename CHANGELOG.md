@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.16.1
+
+- **Model routing from the page.** A "Models: Off | Suggest | Auto" selector sets routing for the project (the new `tree_routing` tool does what `/ambiflex routing` does).
+  - The ⓘ button explains each mode and estimates the work left without vs with routing: each open node's estimate × the list price of its model × an effort factor, against everything on the top model at high effort. An order of magnitude; the Usage tab has the measured cost.
+- **Tools after a reload.** After `/reload-plugins`, the agent now sees the parameters of the new version (`run`, `verifyCmd`, `blocked`…): before, it kept the tool schemas of the version the session started with.
+
 ## 0.16.0
 
 - **Proof next to progress.** The page shows two numbers: "done" (the work finished) and "proven" (what is actually shown toward the goal).

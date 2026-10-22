@@ -5,7 +5,7 @@ import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, Tree
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
 import { buildUsage, parseSamples } from './usage'
-import { MODEL_IDS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
+import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
 import { SUMMARY_SCRIPT, backfillLines, parseSummaries, transcriptDir } from './backfill'
 import { buildBrain, describe, elementOf } from './brain'
@@ -75,8 +75,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.16.0'
-export const WHATS_NEW = 'Proof next to progress: what is shown toward the goal, and what blocks it. Take altitude: the strongest model reviews the whole plan and proposes changes you accept or refuse (/ambiflex altitude).'
+export const VERSION = '0.16.1'
+export const WHATS_NEW = 'Model routing from the page: Off, Suggest or Auto, with an estimate of what routing saves on the open work. After /reload-plugins the tools show the parameters of the new version.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -221,7 +221,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), ...((await routingMode($)) !== 'off' ? { routing: await routingMode($), routes: routes(next, await routingCap($)) } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable' }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   if (await artifactUrl($, true)) await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
@@ -739,6 +739,89 @@ async function stallCheck($: $) {
 }
 
 /**
+ * The tools and their schemas. Registered at session start and again on the first turn after a reload
+ * (/reload-plugins re-runs the module, not session.start): otherwise the agent keeps reading the schemas
+ * of the version the session started with, and cannot see parameters the new version accepts.
+ */
+async function registerTools($: $) {
+  const c = await ctx($) as { toolsVersion?: string }
+  if (c.toolsVersion === VERSION) return
+  for (const [name, description, schema] of [
+    ['tree_get', 'Reads the reasoning tree (goal, nodes, statuses, progress, ETA, auto mode).', { type: 'object' }],
+    ['tree_set_goal', 'Sets the root goal (the goal behind the goal). An existing, different goal is replaced only with replace: true.', {
+      type: 'object', properties: { goal: { type: 'string' }, replace: { type: 'boolean', description: 'Replace an existing goal (only when the user asked for a new one).' } }, required: ['goal'],
+    }],
+    ['tree_upsert', 'Creates or updates a tree node (Altitude / Depth / Range track, or a step).', NODE_SCHEMA],
+    ['tree_merge', 'Merges branches: sources become "merged" and parents of the target node.', {
+      type: 'object',
+      properties: { sources: { type: 'array', items: { type: 'string' } }, into: { type: 'string' } },
+      required: ['sources', 'into'],
+    }],
+    ['tree_explore', 'Tree search: spawns one subagent per proposed child track of a parent node, in parallel, each in its own worktree branch, scored by the judge it declares.', {
+      type: 'object',
+      properties: {
+        parent: { type: 'string', description: 'The node whose proposed children are the tracks to explore.' },
+        maxAgents: { type: 'number', description: 'How many tracks to run at once (default 3).' },
+        minutes: { type: 'number', description: 'Time budget each agent is told to keep to (default 30).' },
+      },
+      required: ['parent'],
+    }],
+    ['tree_prune', 'Abandons every scored track under a parent but the best; returns the winner so you can merge it.', {
+      type: 'object', properties: { parent: { type: 'string' } }, required: ['parent'],
+    }],
+    ['tree_iterate', 'Records one attempt at a node\'s acceptance criterion: the measured result, its value, and whether it passed. A pass makes the node done with that attempt as its proof; a miss keeps it exploring for the next iteration.', {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        result: { type: 'string', description: 'What this attempt measured, in one line (e.g. "WER 9.1% on test-clean").' },
+        value: { type: 'number', description: 'The measured number, to chart the iterations.' },
+        passed: { type: 'boolean', description: 'True when the result meets the node\'s acceptance criterion.' },
+      },
+      required: ['id', 'result', 'passed'],
+    }],
+    ['tree_verify', 'Re-runs the verifyCmd of finished nodes (or of one node) through the Bash tool, under your permission settings, and records which proofs still pass.', {
+      type: 'object', properties: { id: { type: 'string', description: 'One node; omitted, every node that has a verifyCmd.' } },
+    }],
+    ['tree_altitude', 'Takes altitude: returns the brief and the steps for a strategy review of the whole plan by the strongest model (what /ambiflex altitude does). Follow the steps it returns.', { type: 'object', properties: {} }],
+    ['tree_routing', 'Sets model routing for the project (what /ambiflex routing does): off (one model), suggest (show each node\'s model and effort), auto (run each node on it). Optionally caps the top model.', {
+      type: 'object', properties: { mode: { type: 'string', enum: ['off', 'suggest', 'auto'] }, top: { type: 'string', enum: ['haiku', 'sonnet', 'opus', 'fable'], description: 'Highest model routing may use.' } }, required: ['mode'],
+    }],
+    ['tree_review_submit', 'Records a strategy review (from /ambiflex altitude): the diagnosis and the proposed changes. Nothing is applied: the user accepts or refuses each proposal.', {
+      type: 'object',
+      properties: {
+        diagnosis: { type: 'string', description: 'What the results say: what works, what stalls, which assumptions the results refuted, what the goal still lacks. Plain prose, at most ~12 lines.' },
+        by: { type: 'string', description: 'Who reviewed (model), e.g. "fable".' },
+        proposals: {
+          type: 'array', items: {
+            type: 'object', properties: {
+              kind: { type: 'string', enum: ['add', 'update', 'abandon'] },
+              node: { type: 'string', description: 'The node changed (update, abandon).' },
+              fields: { type: 'object', description: 'Node fields to write: title, lens, parents (node ids, or ids of earlier proposals such as p1), weight, seq, acceptance, judge, estimate, summary, blockedOn…' },
+              why: { type: 'string', description: 'Why, citing the result that calls for it.' },
+              gain: { type: 'number', description: 'Proof points it should add toward the goal.' },
+            }, required: ['kind', 'why'],
+          },
+        },
+      },
+      required: ['diagnosis', 'proposals'],
+    }],
+    ['tree_review_decide', 'Accepts or refuses proposals of a strategy review; accepted ones become changes to the tree.', {
+      type: 'object',
+      properties: { review: { type: 'string', description: 'Review id (r1…); omitted, the latest.' }, ids: { type: 'array', items: { type: 'string' }, description: 'Proposal ids (p1…), or ["all"].' }, accept: { type: 'boolean' } },
+      required: ['ids', 'accept'],
+    }],
+    ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
+      type: 'object',
+      properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' } },
+      required: ['on'],
+    }],
+  ] as const) {
+    await $.tool.register({ name, description, inputSchema: schema as Record<string, unknown> })
+  }
+  c.toolsVersion = VERSION
+}
+
+/**
  * `/ambiflex altitude`: a step back over the whole plan. The strongest model reads the goal, every node, every
  * result and what blocks the proof, then proposes changes; the user accepts or refuses each one.
  */
@@ -1232,75 +1315,7 @@ export const register: Register = (on, opts) => {
     await whatsNew($).catch(() => undefined)
     const w = (await ctx($)).warning
     if (w) $.ui.toast(w)
-    for (const [name, description, schema] of [
-      ['tree_get', 'Reads the reasoning tree (goal, nodes, statuses, progress, ETA, auto mode).', { type: 'object' }],
-      ['tree_set_goal', 'Sets the root goal (the goal behind the goal). An existing, different goal is replaced only with replace: true.', {
-        type: 'object', properties: { goal: { type: 'string' }, replace: { type: 'boolean', description: 'Replace an existing goal (only when the user asked for a new one).' } }, required: ['goal'],
-      }],
-      ['tree_upsert', 'Creates or updates a tree node (Altitude / Depth / Range track, or a step).', NODE_SCHEMA],
-      ['tree_merge', 'Merges branches: sources become "merged" and parents of the target node.', {
-        type: 'object',
-        properties: { sources: { type: 'array', items: { type: 'string' } }, into: { type: 'string' } },
-        required: ['sources', 'into'],
-      }],
-      ['tree_explore', 'Tree search: spawns one subagent per proposed child track of a parent node, in parallel, each in its own worktree branch, scored by the judge it declares.', {
-        type: 'object',
-        properties: {
-          parent: { type: 'string', description: 'The node whose proposed children are the tracks to explore.' },
-          maxAgents: { type: 'number', description: 'How many tracks to run at once (default 3).' },
-          minutes: { type: 'number', description: 'Time budget each agent is told to keep to (default 30).' },
-        },
-        required: ['parent'],
-      }],
-      ['tree_prune', 'Abandons every scored track under a parent but the best; returns the winner so you can merge it.', {
-        type: 'object', properties: { parent: { type: 'string' } }, required: ['parent'],
-      }],
-      ['tree_iterate', 'Records one attempt at a node\'s acceptance criterion: the measured result, its value, and whether it passed. A pass makes the node done with that attempt as its proof; a miss keeps it exploring for the next iteration.', {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          result: { type: 'string', description: 'What this attempt measured, in one line (e.g. "WER 9.1% on test-clean").' },
-          value: { type: 'number', description: 'The measured number, to chart the iterations.' },
-          passed: { type: 'boolean', description: 'True when the result meets the node\'s acceptance criterion.' },
-        },
-        required: ['id', 'result', 'passed'],
-      }],
-      ['tree_verify', 'Re-runs the verifyCmd of finished nodes (or of one node) through the Bash tool, under your permission settings, and records which proofs still pass.', {
-        type: 'object', properties: { id: { type: 'string', description: 'One node; omitted, every node that has a verifyCmd.' } },
-      }],
-      ['tree_altitude', 'Takes altitude: returns the brief and the steps for a strategy review of the whole plan by the strongest model (what /ambiflex altitude does). Follow the steps it returns.', { type: 'object', properties: {} }],
-      ['tree_review_submit', 'Records a strategy review (from /ambiflex altitude): the diagnosis and the proposed changes. Nothing is applied: the user accepts or refuses each proposal.', {
-        type: 'object',
-        properties: {
-          diagnosis: { type: 'string', description: 'What the results say: what works, what stalls, which assumptions the results refuted, what the goal still lacks. Plain prose, at most ~12 lines.' },
-          by: { type: 'string', description: 'Who reviewed (model), e.g. "fable".' },
-          proposals: {
-            type: 'array', items: {
-              type: 'object', properties: {
-                kind: { type: 'string', enum: ['add', 'update', 'abandon'] },
-                node: { type: 'string', description: 'The node changed (update, abandon).' },
-                fields: { type: 'object', description: 'Node fields to write: title, lens, parents (node ids, or ids of earlier proposals such as p1), weight, seq, acceptance, judge, estimate, summary, blockedOn…' },
-                why: { type: 'string', description: 'Why, citing the result that calls for it.' },
-                gain: { type: 'number', description: 'Proof points it should add toward the goal.' },
-              }, required: ['kind', 'why'],
-            },
-          },
-        },
-        required: ['diagnosis', 'proposals'],
-      }],
-      ['tree_review_decide', 'Accepts or refuses proposals of a strategy review; accepted ones become changes to the tree.', {
-        type: 'object',
-        properties: { review: { type: 'string', description: 'Review id (r1…); omitted, the latest.' }, ids: { type: 'array', items: { type: 'string' }, description: 'Proposal ids (p1…), or ["all"].' }, accept: { type: 'boolean' } },
-        required: ['ids', 'accept'],
-      }],
-      ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
-        type: 'object',
-        properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' } },
-        required: ['on'],
-      }],
-    ] as const) {
-      await $.tool.register({ name, description, inputSchema: schema as Record<string, unknown> })
-    }
+    await registerTools($)
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
@@ -1356,6 +1371,7 @@ ${outline(await read($, tree))}` }
   // A main turn that begins with the plugin's own hand-over is the turn that spends one of the budget:
   // the counter advances here, once per started turn, whatever number of hand-overs were queued.
   on('turn.start', async ($, e, next) => {
+    await registerTools($).catch(() => undefined)
     if (e.agentId) return next(e)
     if (e.text.startsWith('[tree] Auto mode')) {
       ;(await ctx($)).pendingKick = undefined
@@ -1493,6 +1509,7 @@ ${outline(await read($, tree))}` }
   // Proofs that can be replayed: each verifyCmd runs through the Bash tool, so the user's permission
   // rules apply to it like to any other command (a tree from elsewhere cannot run anything silently).
   on('tool.call', { tool: 'mcp__ambiflex__tree_altitude' }, async ($) => ({ result: (await altitudeRequest($)).ask.replace(/^\[tree\] /, '') }))
+  on('tool.call', { tool: 'mcp__ambiflex__tree_routing' }, async ($, e) => { const r = e as unknown as { mode?: string; top?: string }; return { result: await setRouting($, r.mode, r.top) } })
   on('tool.call', { tool: 'mcp__ambiflex__tree_review_submit' }, async ($, e) => {
     const raw = e as unknown as { diagnosis?: string; by?: string; proposals?: { kind?: string; node?: string; fields?: Record<string, unknown>; why?: string; gain?: number }[] }
     const t = await read($, tree)
