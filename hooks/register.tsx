@@ -62,8 +62,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.13.1'
-export const WHATS_NEW = '/ambiflex backfill reads the sessions this project already had on this machine (Claude Code keeps their transcripts) and fills Usage, Agent OS and Growth with them: cost, models, skill uses and changes, the files of the brain they touched. Each session is read once; past sessions keep no usage-window readings, so their % of the week stays unknown.'
+export const VERSION = '0.13.2'
+export const WHATS_NEW = 'a tidier tree on the page: rows are ordered so links cross as little as possible and children sit under their parents; drag a node to place it (kept after each update, Reset layout forgets it); closed nodes (abandoned, moved, superseded) are hidden until you press Show closed. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

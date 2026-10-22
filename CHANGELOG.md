@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.13.2
+
+A tidier tree on the page.
+
+- **Fewer crossings.** Rows are ordered by alternate sweeps, so links cross as little as possible, and children sit under their parents.
+- **Drag a node to place it.** A drag on a node moves it; a drag on the background still pans. The position is kept across updates and reloads, in that browser and for that project. **Reset layout** forgets the positions.
+- **Closed nodes hidden.** Abandoned, moved and superseded nodes are hidden by default; **Show closed (N)** brings them back.
+- Run `/ambiflex page` once to republish your page.
+
 ## 0.13.1
 
 - **`/ambiflex backfill`.** It fills the Usage, Agent OS and Growth views from the sessions this project already had on this machine. Claude Code keeps their transcripts in `~/.claude/projects/`.
