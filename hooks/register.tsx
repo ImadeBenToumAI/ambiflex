@@ -75,8 +75,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.16.3'
-export const WHATS_NEW = 'The page says what a click is doing: Sent to Claude, then applied, or no answer after a minute; Take altitude shows the review is under way until it lands.'
+export const VERSION = '0.16.4'
+export const WHATS_NEW = 'Page clicks reach Claude again (the page asks at each click whether a session listens, says Not sent when none does, and the project session runs queued clicks); estimates read m as months and no longer count waiting time.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -796,7 +796,7 @@ async function registerTools($: $) {
             type: 'object', properties: {
               kind: { type: 'string', enum: ['add', 'update', 'abandon'] },
               node: { type: 'string', description: 'The node changed (update, abandon).' },
-              fields: { type: 'object', description: 'Node fields to write: title, lens, parents (node ids, or ids of earlier proposals such as p1), weight, seq, acceptance, judge, estimate, summary, blockedOn…' },
+              fields: { type: 'object', description: 'Node fields to write: title, lens, parents (node ids, or ids of earlier proposals such as p1), weight, seq, acceptance, judge, estimate, summary, blockedOn, and status (to close a node as done, give its verification too).' },
               why: { type: 'string', description: 'Why, citing the result that calls for it.' },
               gain: { type: 'number', description: 'Proof points it should add toward the goal.' },
             }, required: ['kind', 'why'],
@@ -832,7 +832,7 @@ async function altitudeRequest($: $): Promise<{ ask: string; text: string }> {
   const p = proofScore(t)
   const top = (await topModelOf($)) || 'fable'
   const brief = altitudeBrief(t, new Date().toISOString())
-  const ask = `[tree] Take altitude on this plan. Spawn ONE Agent (subagent_type "general-purpose", model "${top}", description "Take altitude: strategy review") with the brief below, and ask it to think at full effort and return ONLY a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary}, "why": "...", "gain": proof points}. Its instructions:
+  const ask = `[tree] Take altitude on this plan. Spawn ONE Agent (subagent_type "general-purpose", model "${top}", description "Take altitude: strategy review") with the brief below, and ask it to think at full effort and return ONLY a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary, status, verification}, "why": "...", "gain": proof points}. Its instructions:
 - Apply the be-ambitious method: Altitude (the durable outcome behind the goal), Depth (what the best expert would do, with which tools and which external judge), Range (which other disciplines).
 - Read the results, not the plan: which assumptions did the results refute, which tracks stall (several missed attempts, estimates far exceeded), what the goal needs that no node covers, which tracks have no measurable criterion.
 - Propose at most 12 changes, the ones that raise the proof the most: new nodes (each with an acceptance criterion and a judge), reordering (seq) and re-weighting, sharper or corrected criteria, tracks to abandon with the reason. Every change cites the result that calls for it and estimates its proof gain. Keep node titles under 40 characters, stating a finding or a target.
@@ -881,6 +881,21 @@ async function stalePage($: $) {
   $.ui.toast(`Republishing the page: ${was} → ${VERSION}`)
   const { ask } = await pageRequest($)
   await handOver($, `${ask} (The page was published by ${was}; this session runs ${VERSION}.)`)
+}
+
+/**
+ * Requests clicked on the page while no session was listening wait in its "actions" collection (via: queue).
+ * Every quarter of an hour at most, at the end of a turn, the project's session looks for them and runs them.
+ */
+async function drainQueue($: $) {
+  const c = await ctx($) as { drainAt?: number; blocked?: boolean }
+  if (c.blocked || (c.drainAt && Date.now() - c.drainAt < 15 * 60e3)) return
+  c.drainAt = Date.now()
+  const url = await artifactUrl($, true)
+  if (!url) return
+  const got = await $.tool.call({ tool: 'ArtifactData', action: 'query', url, collection: 'actions', query: { where: [['via', '==', 'queue']], limit: 20 } } as never).catch(() => undefined)
+  if (!/"queue"|via: ?queue|'queue'/.test(JSON.stringify(got ?? ''))) return
+  await handOver($, `[tree] The project's page has requests clicked while no session was listening (collection "actions", via "queue"). Read them with ArtifactData (query, collection "actions", where via == "queue"), do each one in the order clicked, skipping exact repeats and requests already done since, then mark each one handled (ArtifactData update, via "done"). Tell me in one line what you ran.`)
 }
 
 /** From the panel: a press may submit a prompt (a command may not: it holds the turn). */
@@ -1431,6 +1446,7 @@ ${outline(await read($, tree))}` }
     await trackCost($).catch(() => undefined)
     await stallCheck($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await stalePage($).catch(() => undefined)
+    if (!(await read($, tree)).auto.on) await drainQueue($).catch(() => undefined)
     const c = await ctx($)
     if (c.compactDue) {
       c.compactDue = false

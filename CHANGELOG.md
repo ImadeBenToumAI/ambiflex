@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.16.4
+
+- **Page clicks reach Claude.** The page asked once, at load, whether a Claude session was listening, before that session was known, and kept "no" for the whole visit; a second click within 3 s was queued silently, and nothing read the queue.
+  - It now asks at each click and sends a double click once.
+  - When no session listens it says **Not sent** where you clicked, with the reason and Copy; the review and altitude buttons no longer say "Sent" for a click that was not.
+  - Queued clicks are no longer lost: the project's session finds them at the end of a turn and runs them.
+- **Sane cost and end date.** `m` / `mo` mean months (minutes are `min`); calibration no longer counts nodes whose calendar time is more than 4× their estimate (waiting, not effort) and is capped at 2×.
+- **A strategy review can close a node.** A proposal may set its status, with the verification.
+
 ## 0.16.3
 
 - **The page says what a click is doing.** Accept / Refuse on a strategy review become "Sent to Claude…" and cannot be pressed twice; a toast says when the decision is applied, and after a minute without an answer the page asks whether the project's session is open, with Send again.

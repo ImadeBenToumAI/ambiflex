@@ -297,3 +297,31 @@ test('a review waits for the user; accepted proposals become nodes, refused ones
   expect(t.reviews![0].proposals.map(p => p.decided)).toEqual(['accepted', 'accepted', 'refused'])
   expect(parseTree(JSON.stringify(t)).reviews).toEqual(t.reviews)
 })
+
+test('months are m or mo, minutes are min; waiting does not calibrate and the factor is capped', () => {
+  expect(minutes('2m')).toBe(20800)
+  expect(minutes('1mo')).toBe(10400)
+  expect(minutes('45min')).toBe(45)
+  expect(minutes('2w/2m/4m')).toBe(Math.round((4800 + 4 * 20800 + 41600) / 6))
+  let t = sample()
+  // 44 h of calendar time on a 4h task: waiting, not effort.
+  t = upsert(t, { title: 'Waited', lens: 'step', estimate: '4h', status: 'exploring' }, '2026-10-19T10:00:00.000Z').tree
+  t = upsert(t, { id: 'n5', status: 'done', verification: 'x' }, '2026-10-21T06:00:00.000Z').tree
+  expect(calibration(t)).toEqual({ factor: 1, samples: 0 })
+  // 3× on two nodes: real overrun, capped at 2×.
+  for (const [id, title] of [['n6', 'A'], ['n7', 'B']]) {
+    t = upsert(t, { title, lens: 'step', estimate: '1h', status: 'exploring' }, '2026-10-19T10:00:00.000Z').tree
+    t = upsert(t, { id, status: 'done', verification: 'x' }, '2026-10-19T13:00:00.000Z').tree
+  }
+  expect(calibration(t)).toEqual({ factor: 2, samples: 2 })
+})
+
+test('an accepted proposal can close a node, with its verification', () => {
+  let t = upsert({ ...emptyTree(), goal: 'G' }, { title: 'Track', lens: 'depth', status: 'review' }, T0).tree
+  t = addReview(t, { id: 'r1', at: T0, by: 'fable', diagnosis: 'd', proofBefore: 0, proposals: [
+    { id: 'p1', kind: 'update', node: 'n1', fields: { status: 'done', verification: 'n39 measured 51.2 %' }, why: 'evidence in n39' },
+  ] })
+  t = decide(t, 'r1', ['p1'], true, T0)
+  expect(t.nodes[0].status).toBe('done')
+  expect(t.nodes[0].verification).toBe('n39 measured 51.2 %')
+})

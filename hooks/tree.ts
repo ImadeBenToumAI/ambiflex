@@ -247,11 +247,12 @@ export function minutes(estimate: string | undefined): number {
 }
 
 function one(text: string): number {
-  const m = text.match(/([\d.,]+)\s*(min|m|h|d|j|w|sem)\b/i)
+  // m and mo are months (2w/2m/4m reads as weeks to months); minutes are min or mn.
+  const m = text.match(/([\d.,]+)\s*(min|mn|mo|mois|m|h|d|j|w|sem)\b/i)
   if (!m) return 0
   const n = parseFloat(m[1]!.replace(',', '.'))
   const unit = m[2]!.toLowerCase()
-  const factor = unit === 'min' || unit === 'm' ? 1 : unit === 'h' ? 60 : unit === 'd' || unit === 'j' ? 480 : 2400
+  const factor = unit === 'min' || unit === 'mn' ? 1 : unit === 'h' ? 60 : unit === 'd' || unit === 'j' ? 480 : unit === 'w' || unit === 'sem' ? 2400 : 10400
   return Math.round(n * factor)
 }
 
@@ -336,10 +337,15 @@ export function calibration(tree: Tree): { factor: number; samples: number } {
     .map(n => ({ actual: (Date.parse(n.finishedAt!) - Date.parse(n.startedAt!)) / 60000, est: minutes(n.estimate) }))
     .filter(p => Number.isFinite(p.actual) && p.actual >= 2)
     .map(p => p.actual / p.est)
-    .filter(r => r >= 0.002 && r <= 20)
+    // Start and end are calendar times: nights, weekends and waits on the owner are in them. A node that took more
+    // than 4× its estimate in calendar time measures waiting, not effort, and does not calibrate anything.
+    .filter(r => r >= 0.002 && r <= 4)
     .sort((a, b) => a - b)
   if (pairs.length === 0) return { factor: 1, samples: 0 }
-  return { factor: +pairs[Math.floor(pairs.length / 2)]!.toFixed(2), samples: pairs.length }
+  // Capped at 2×: above that the calendar measures waiting, and the cost and the end date would run away. Agents
+  // finishing far faster than estimated is real pace and stays.
+  const median = pairs[Math.floor(pairs.length / 2)]!
+  return { factor: +Math.min(2, median).toFixed(2), samples: pairs.length }
 }
 
 /** When the plan should land: the calibrated critical path from now, with the three-point spread as ±. */
