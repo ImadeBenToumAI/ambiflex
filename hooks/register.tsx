@@ -72,8 +72,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.13.3'
-export const WHATS_NEW = 'model routing from inside any session: /ambiflex routing suggest|auto|off [fable] sets it for the project (no /plugin configure needed, works remotely); the goal and the Altitude tracks now run on the strongest model at full effort.'
+export const VERSION = '0.14.0'
+export const WHATS_NEW = 'sounds on the page: a short synthesised motif for each event (new node, work starts, agent forks, criterion met or missed, your turn, node done, blocked, track closed, goal reached, week at risk); off until you press Sound, each one playable from the legend. Run /ambiflex page to republish the page.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

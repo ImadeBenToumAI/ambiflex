@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.14.0
+
+- **Sounds on the page.** Eleven short motifs, synthesised in the browser (no audio files), mark what happens in the tree: new node, work starts, agent forks, criterion met or missed, your turn, blocked, node done, track closed, goal reached, week at risk.
+  - Off by default: press **♪ Sound** to turn them on. The first load is silent, and when one update brings several events only the most important one plays.
+  - The legend has a ▶ button for each sound.
+
 ## 0.13.3
 
 - **`/ambiflex routing [off|suggest|auto] [model]`.** It sets model routing for the project from inside any session, remote ones included, where `/plugin configure` is not available.
