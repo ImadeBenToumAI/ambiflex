@@ -4,6 +4,7 @@ import type { EngineInterface, Register, ResolveInput } from 'claude-code'
 import type { BranchInfo, Cost, GitCommit, LiveActivity, Status, Tab, Tree, TreeNode } from '../types'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
+import { SERVER_PY, localShim, parseActions } from './local'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
@@ -77,8 +78,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.17.0'
-export const WHATS_NEW = 'The page follows the session for real: a heartbeat says whether the session works, idles or no longer syncs (and why), each node shows its task list and subagents, and /ambiflex doctor says whether the page receives the activity.'
+export const VERSION = '0.18.0'
+export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -226,7 +227,8 @@ async function save($: $, next: Tree) {
   const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable' }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
-  if (await artifactUrl($, true)) await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
+  // pushDoc also keeps the local copy the local page reads, page or not.
+  await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
 }
 
 /** The project's name: its folder's name. */
@@ -547,6 +549,8 @@ const reasonOf = (r: unknown) => {
 /** Writes one doc of the page's store ("<collection>/current"), pinned to the version last seen. */
 async function pushDoc($: $, collection: string, data: Record<string, unknown>, strict = false) {
   if ((await ctx($)).blocked) return
+  // The local copy first: the local page (/ambiflex local) reads it, with no claude.ai sync in between.
+  await $.fs.write(`${await rootOf($)}.ambiflex/docs/${collection}.json`, JSON.stringify(data)).catch(() => undefined)
   const c = await ctx($)
   // After a failure the page is left alone for two minutes, then tried again: never off for the whole session.
   if (c.liveOff && Date.now() < (c.liveRetryAt ?? 0)) return
@@ -871,6 +875,51 @@ async function doctor($: $): Promise<string> {
   else if (c.syncOkAt) lines.push(`Syncing: last write ${c.syncOkAt}. The page shows live activity, tasks and subagents.`)
   else lines.push('No write yet in this session.')
   return lines.join('\n')
+}
+
+/**
+ * `/ambiflex local [stop]`: starts (or stops) the local page server on 127.0.0.1 and gives its address.
+ * The page it serves reads this session's documents from disk every second and queues its buttons for the session.
+ */
+async function localPage($: $, arg?: string): Promise<string> {
+  const root = await rootOf($)
+  const dir = `${root}.ambiflex/`
+  const conf = JSON.parse(((await $.fs.read(`${dir}local.json`).catch(() => '')) as string) || '{}') as { port?: number; key?: string; pid?: number }
+  const alive = async (pid?: number) => !!pid && (await $.process.run(['kill', '-0', String(pid)]).catch(() => undefined))?.exitCode === 0
+  if (arg === 'stop') {
+    if (await alive(conf.pid)) await $.process.run(['kill', String(conf.pid)]).catch(() => undefined)
+    return 'Local page stopped.'
+  }
+  await $.fs.write(`${dir}local.html`, PAGE_HTML.replace('__AMBIFLEX_VERSION__', VERSION).replace('<script>', `${localShim(conf.key ?? '')}\n<script>`))
+  if (!(await alive(conf.pid)) || !conf.key || !conf.port) {
+    const key = Array.from({ length: 24 }, () => 'abcdefghijkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 32)]).join('')
+    const port = 47000 + Math.floor(Math.random() * 2000)
+    await $.fs.write(`${dir}serve.py`, SERVER_PY)
+    await $.fs.write(`${dir}local.html`, PAGE_HTML.replace('__AMBIFLEX_VERSION__', VERSION).replace('<script>', `${localShim(key)}\n<script>`))
+    const ran = await $.process.run(['sh', '-c', `cd "${dir}" && nohup python3 serve.py ${port} ${key} >/dev/null 2>&1 & echo $!`]).catch(() => undefined)
+    const pid = Number(String(ran?.stdout ?? '').trim()) || undefined
+    if (!pid) return 'Could not start the local page: python3 is needed (macOS and Linux have it).'
+    conf.port = port; conf.key = key; conf.pid = pid
+    await $.fs.write(`${dir}local.json`, `${JSON.stringify(conf)}\n`)
+    const ign = (await $.fs.read(`${dir}.gitignore`).catch(() => '')) as string
+    if (!ign.includes('local.json')) await $.fs.write(`${dir}.gitignore`, `${ign}${ign && !ign.endsWith('\n') ? '\n' : ''}local.json\nlocal.html\nserve.py\nactions.jsonl\ndocs/\n`).catch(() => undefined)
+  }
+  await save($, await read($, tree)).catch(() => undefined)
+  await pushLive($, true).catch(() => undefined)
+  return `Local page: http://127.0.0.1:${conf.port}/?k=${conf.key}\nIt reads this session's state from disk every second and its buttons reach this session directly. In Chrome: menu > Cast, save and share > Install page as app, for a window of its own. /ambiflex local stop stops it.`
+}
+
+/** Buttons pressed on the local page wait in .ambiflex/actions.jsonl: taken in order, once, then handed to this session. */
+async function drainLocal($: $) {
+  const c = await ctx($) as { drainedAt?: number }
+  if (c.drainedAt && Date.now() - c.drainedAt < 3000) return
+  c.drainedAt = Date.now()
+  const path = `${await rootOf($)}.ambiflex/actions.jsonl`
+  const text = (await $.fs.read(path).catch(() => '')) as string
+  if (!text.trim()) return
+  await $.fs.write(path, '')
+  const asks = parseActions(text)
+  if (asks.length) await handOver($, asks.join('\n\n'))
 }
 
 /**
@@ -1407,7 +1456,7 @@ export const register: Register = (on, opts) => {
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
-      argumentHint: '[auto [turns] | stop | status | page | update | altitude | doctor]',
+      argumentHint: '[auto [turns] | stop | status | page | local [stop] | update | altitude | doctor]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -1426,6 +1475,7 @@ ${outline(await read($, tree))}` }
     if (verb === 'page') { const r = await pageRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'update') return { text: await selfUpdate($) }
     if (verb === 'doctor') return { text: await doctor($) }
+    if (verb === 'local') return { text: await localPage($, arg) }
     if (verb === 'altitude') { const r = await altitudeRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'backfill') return { text: await backfill($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
@@ -1504,6 +1554,7 @@ ${outline(await read($, tree))}` }
     await stallCheck($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await stalePage($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await drainQueue($).catch(() => undefined)
+    await drainLocal($).catch(() => undefined)
     const c = await ctx($)
     if (c.compactDue) {
       c.compactDue = false
@@ -1734,6 +1785,7 @@ ${outline(await read($, tree))}` }
     // A heartbeat every 30 s while work goes on, even when the activity line does not change.
     const c = await ctx($)
     if (!c.pushing && Date.now() - c.livePushedAt > 30e3) await pushLive($, true).catch(() => undefined)
+    if (!e.agentId) await drainLocal($).catch(() => undefined)
     return ran
   })
 

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { parseActions } from '../hooks/local'
 import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
@@ -324,4 +325,8 @@ test('an accepted proposal can close a node, with its verification', () => {
   t = decide(t, 'r1', ['p1'], true, T0)
   expect(t.nodes[0].status).toBe('done')
   expect(t.nodes[0].verification).toBe('n39 measured 51.2 %')
+})
+
+test('local actions: torn lines are skipped and repeats kept once', () => {
+  expect(parseActions('{"text":"a"}\n{"tex\n{"text":"a"}\n{"text":"b"}\n')).toEqual(['a', 'b'])
 })

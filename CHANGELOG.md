@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.18.0
+
+- **Local page** (`/ambiflex local`, `/ambiflex local stop`): the plugin starts a small server on `127.0.0.1` and gives you a private link (`http://127.0.0.1:PORT/?k=KEY`). The page reads the session's tree, live activity, tasks and agents straight from disk every second, with no claude.ai publish and no ArtifactData permission. Install it as a browser app to keep it beside Claude.
+- Buttons on the local page (Take altitude, Accept all, node actions) reach the session through `.ambiflex/actions.jsonl`; Claude picks them up within seconds while it works, or at the end of the turn.
+- Every doc the plugin pushes to claude.ai is also written to `.ambiflex/docs/`, so the claude.ai page and the local page show the same data. The local files are git-ignored.
+
 ## 0.17.0
 
 - **The page follows the session for real.**

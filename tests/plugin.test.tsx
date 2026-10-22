@@ -523,3 +523,18 @@ test('live: tasks ride their loop, a subagent without #node works for the node i
   await $.agent.spawn({ description: 'Check the decoder', prompt: 'look at the logs' } as never)
   expect(liveDoc().agents).toContainEqual(expect.objectContaining({ id: 'agent-9', node: 'n1' }))
 })
+
+test('local page: documents are kept on disk, and its buttons reach the session once, in order', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  bottoms(on, [], files)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Decode', lens: 'step', status: 'exploring' } as never)
+  expect([...files.keys()].some(k => k.endsWith('.ambiflex/docs/tree.json'))).toBe(true)
+  const q = String([...files.keys()].find(k => k.endsWith('.ambiflex/docs/tree.json'))).replace('docs/tree.json', 'actions.jsonl')
+  files.set(q, '{"text":"[tree] Take altitude"}\n{"text":"[tree] Take altitude"}\n{"text":"[tree] Accept p1"}\n')
+  await turn($, 'end_turn')
+  expect(prompts).toEqual(['[tree] Take altitude\n\n[tree] Accept p1'])
+  expect(files.get(q)).toBe('')
+})
