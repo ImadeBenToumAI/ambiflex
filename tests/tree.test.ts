@@ -349,6 +349,8 @@ test('overhead: only what Ambiflex adds, as a range, with plugin turns measured 
   expect(o.usd.high).toBeLessThan(1)
   expect(Math.abs(o.pct!.mid - o.usd.mid / 10 * 100) < 0.01).toBe(true)
   expect(overheadLine(o)).toContain('not counted')
+  expect(overheadLine(o)).not.toContain('$')
+  expect(o.share!.mid).toBeGreaterThan(o.usd.mid / 10)
   // A compaction drops what Ambiflex carried in context.
   expect(noteCompact(l).carriedTok).toBe(0)
 })

@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.19.1
+
+- **Overhead calibrated on a real A/B run.** The same task ran 3 times without Ambiflex and 3 times with it (Sonnet). With the plugin loaded but the tree barely used, the difference was within the noise (+5 %, runs vary ±8 %). With a CLAUDE.md asking for the tree, Ambiflex added **+29 %** to the task's own cost. The estimate's middle value was too high and now uses the measured round-trip factor.
+- **Shares, not dollars.** The overhead is shown as a share of the session on the page and in `/ambiflex doctor`.
+- **Routing savings, net of Ambiflex.** Under Models, a new "Ambiflex itself" tile gives the plugin's cost in the same cost units as routing, and "Saved" is now net of it (the routing-only figure stays beside it).
+- **Live event feed.** Every event that plays a sound also appears in a small scrolling column in the header's right corner, with its node and detail (the proof of a done node, an iteration's result, the agent that forked). It fills even with the sound off; a line opens its node.
+
 ## 0.19.0
 
 - **What Ambiflex itself costs.** The page shows an "Ambiflex ≈ X %" chip, and `/ambiflex doctor` the same line: only the delta the plugin adds to the session's bill, never the task's own tokens.

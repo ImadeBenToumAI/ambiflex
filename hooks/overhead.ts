@@ -11,6 +11,13 @@
 import { tierOf, TIERS } from './routing'
 
 /** Dollars per million tokens: input and output. Cache reads cost a tenth of input, cache writes 1.25×. */
+/**
+ * The A/B measure the estimate is calibrated on: the same task, 3 runs without Ambiflex and 3 with the plugin
+ * and a CLAUDE.md asking for the tree (Sonnet, 2026-10-22). With the tree in use, Ambiflex added 29 % to the
+ * task's own cost; an extra round trip cost about 0.2 of a full context re-read, not more.
+ */
+export const CALIBRATION = { date: '2026-10-22', model: 'sonnet', runs: 3, share: 0.29, roundTrip: 0.2 }
+
 export const PRICES: Record<string, { in: number; out: number }> = {
   haiku: { in: 0.1, out: 0.5 }, sonnet: { in: 2, out: 10 }, opus: { in: 4, out: 20 }, fable: { in: 10, out: 50 },
 }
@@ -54,6 +61,9 @@ export type Part = { low: number; mid: number; high: number }
 export type Overhead = {
   usd: Part; pct: Part | null; sessionUsd: number; model: string
   parts: { fixed: Part; tools: Part; turns: Part }
+  /** Ambiflex's cost as a share of the task's own cost (the session less Ambiflex): what scales a cost-unit estimate. */
+  share: Part | null
+  calibration: typeof CALIBRATION
   fixedTok: number; calls: number; turns: number; autoUsd: number; requests: number
 }
 
@@ -78,16 +88,19 @@ export function overhead(l: Ledger, fixedTok: number, model: string | undefined,
   // The round trip costs nothing when the call rides alongside other tool calls (low), a full re-read when alone (high).
   const own = l.argTok * out + l.resultTok * write + l.carriedReadTok * read
   const trip = l.roundTripTok * read
-  const tools = part(own, own + trip * 0.6, own + trip + l.calls * 40 * out)
+  const tools = part(own, own + trip * CALIBRATION.roundTrip, own + trip * 0.6 + l.calls * 40 * out)
   const turns = part(l.turnUsd, l.turnUsd + l.mixedUsd * 0.5, l.turnUsd + l.mixedUsd)
   const usd = part(fixed.low + tools.low + turns.low, fixed.mid + tools.mid + turns.mid, fixed.high + tools.high + turns.high)
   const pct = sessionUsd > 0 ? part(Math.min(100, usd.low / sessionUsd * 100), Math.min(100, usd.mid / sessionUsd * 100), Math.min(100, usd.high / sessionUsd * 100)) : null
-  return { usd, pct, sessionUsd: r4(sessionUsd), model: name, parts: { fixed, tools, turns }, fixedTok, calls: l.calls, turns: l.turns, autoUsd: r4(l.autoUsd), requests: l.requests }
+  const task = (x: number) => sessionUsd - x > 0 ? x / (sessionUsd - x) : 0
+  const share = sessionUsd > 0 ? part(task(usd.low), task(usd.mid), task(usd.high)) : null
+  return { share, calibration: CALIBRATION, usd, pct, sessionUsd: r4(sessionUsd), model: name, parts: { fixed, tools, turns }, fixedTok, calls: l.calls, turns: l.turns, autoUsd: r4(l.autoUsd), requests: l.requests }
 }
 
-/** One line for /ambiflex doctor and the page's tooltip. */
+/** One line for /ambiflex doctor: shares, never dollars (the page's cost units and the plan's are relative too). */
 export function overheadLine(o: Overhead): string {
-  const $ = (x: number) => `$${x.toFixed(x < 1 ? 3 : 2)}`
-  const pct = o.pct ? `${o.pct.mid.toFixed(1)} % of this session (${o.pct.low.toFixed(1)}–${o.pct.high.toFixed(1)} %)` : 'no session spend yet'
-  return `Ambiflex overhead: ≈ ${$(o.usd.mid)} (${$(o.usd.low)}–${$(o.usd.high)}), ${pct}. Fixed ${$(o.parts.fixed.mid)} (${o.fixedTok} tokens × ${o.requests} requests, cached), tools ${$(o.parts.tools.mid)} (${o.calls} tree calls), plugin turns ${$(o.parts.turns.mid)} (${o.turns}). Estimated on ${o.model} prices; auto-mode work (${$(o.autoUsd)}) and routing savings are not counted here.`
+  const pct = (x: number) => `${x.toFixed(1)} %`
+  const of = (x: number) => o.sessionUsd > 0 ? pct(x / o.sessionUsd * 100) : '—'
+  const head = o.pct ? `≈ ${pct(o.pct.mid)} of this session (${pct(o.pct.low)}–${pct(o.pct.high)})` : 'no session spend yet'
+  return `Ambiflex overhead: ${head}. Method and tools ${of(o.parts.fixed.mid)} (${o.fixedTok} tokens × ${o.requests} requests, cached), ${o.calls} tree calls ${of(o.parts.tools.mid)}, ${o.turns} plugin turns ${of(o.parts.turns.mid)}. Calibrated on an A/B run (${o.calibration.date}: +${Math.round(o.calibration.share * 100)} % with the tree in use). Auto-mode work and routing savings are not counted here.`
 }

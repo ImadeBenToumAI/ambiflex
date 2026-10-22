@@ -577,5 +577,5 @@ test('overhead: a plugin-started turn is measured, a user turn is not, and docto
   const r = String(((await $.command.run({ command: 'ambiflex', args: 'doctor' } as never)) as { text?: string }).text)
   expect(r).toContain('Ambiflex overhead')
   expect(r).toContain('1 tree calls')
-  expect(r).toContain('plugin turns $0.25')
+  expect(r).toContain('1 plugin turns')
 })
