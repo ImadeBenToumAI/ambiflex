@@ -75,8 +75,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.16.1'
-export const WHATS_NEW = 'Model routing from the page: Off, Suggest or Auto, with an estimate of what routing saves on the open work. After /reload-plugins the tools show the parameters of the new version.'
+export const VERSION = '0.16.2'
+export const WHATS_NEW = '/ambiflex page now really publishes (before, it waited for your next message), and after an update the project session republishes its page by itself, so the page never lags behind the plugin.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -856,11 +856,31 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   const name = await projectName($)
   const url = await artifactUrl($)
   const known = !!url
-  const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>", "project": "${name}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
+  const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
   const ask = known
-    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, read the live page with the Artifact tool and find its PAGE_VERSION = '…' line: if the live page is a newer version than ${VERSION}, do NOT republish it (another session runs a newer Ambiflex; tell me to /reload-plugins here) and only sync the tree. Otherwise republish ${PAGE_FILE} to that same URL, keeping its capabilities, write {"url": "${url}", "project": "${name}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
+    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, read the live page with the Artifact tool and find its PAGE_VERSION = '…' line: if the live page is a newer version than ${VERSION}, do NOT republish it (another session runs a newer Ambiflex; tell me to /reload-plugins here) and only sync the tree. Otherwise republish ${PAGE_FILE} to that same URL, keeping its capabilities, write {"url": "${url}", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
     : `[tree] Publish the interactive Ambiflex page for the project "${name}". ${publishNew}`
   return { ask, text: known ? `page.html regenerated (${VERSION}); Claude publishes it now${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : `page.html generated (${VERSION}); Claude publishes it now.` }
+}
+
+/**
+ * A page published by an older version: after an update, the session of the project republishes it by itself
+ * (once per session), so the page never lags behind the plugin and its buttons keep answering this session.
+ */
+async function stalePage($: $) {
+  const c = await ctx($) as { pageChecked?: boolean; blocked?: boolean }
+  if (c.pageChecked || c.blocked) return
+  c.pageChecked = true
+  const raw = await $.fs.read(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => '') as string
+  let rec: { url?: string; project?: string; pageVersion?: string } = {}
+  try { rec = JSON.parse(raw) } catch { return }
+  if (!rec.url || rec.project !== await projectName($)) return
+  if (rec.pageVersion && !newerVersion(VERSION, rec.pageVersion)) return
+  const was = rec.pageVersion ?? 'an older version'
+  if (!options.autoRepublish) { $.ui.toast(`The page is ${was}, the plugin ${VERSION}: /ambiflex page to update it.`); return }
+  $.ui.toast(`Republishing the page: ${was} → ${VERSION}`)
+  const { ask } = await pageRequest($)
+  await handOver($, `${ask} (The page was published by ${was}; this session runs ${VERSION}.)`)
 }
 
 /** From the panel: a press may submit a prompt (a command may not: it holds the turn). */
@@ -1097,6 +1117,7 @@ type Options = {
   planUsd: number
   installPing: boolean
   brainUserLevel: boolean
+  autoRepublish: boolean
   wakeWord: string
   budgetUsd: number
   alertPct: number
@@ -1104,7 +1125,7 @@ type Options = {
   hourlyRateUsd: number
 }
 
-let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, autoRepublish: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -1333,9 +1354,11 @@ export const register: Register = (on, opts) => {
     if (verb === 'stop') { await stopAuto($, 'stopped by command'); return { text: 'Auto mode off.' } }
     if (verb === 'status') return { text: `Ambiflex v${VERSION}
 ${outline(await read($, tree))}` }
-    if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
+    // The ask must start a turn of its own: left in the command's context it would wait for the user's next message,
+    // and a command may not submit a prompt while it holds its turn, so it goes out when that turn completes.
+    if (verb === 'page') { const r = await pageRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'update') return { text: await selfUpdate($) }
-    if (verb === 'altitude') { const r = await altitudeRequest($); return { text: r.text, context: [r.ask] } }
+    if (verb === 'altitude') { const r = await altitudeRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'backfill') return { text: await backfill($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
     await load($)
@@ -1403,8 +1426,11 @@ ${outline(await read($, tree))}` }
       }
       return ran
     }
+    const q = (await ctx($)) as { queued?: string }
+    if (q.queued) { const text = q.queued; q.queued = undefined; await handOver($, text).catch(() => undefined); return ran }
     await trackCost($).catch(() => undefined)
     await stallCheck($).catch(() => undefined)
+    if (!(await read($, tree)).auto.on) await stalePage($).catch(() => undefined)
     const c = await ctx($)
     if (c.compactDue) {
       c.compactDue = false

@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -60,6 +60,12 @@
       "description": "Your subscription's monthly price in USD (e.g. 200 for Max 20x), to compare with the API-price value this project used. 0 hides the comparison.",
       "default": 0,
       "title": "Plan price (USD/month)"
+    },
+    "autoRepublish": {
+      "type": "boolean",
+      "title": "Republish the page after an update",
+      "description": "When the project's page was published by an older Ambiflex, the project's session republishes it after its first turn (you approve the publish). Off: a reminder only.",
+      "default": true
     },
     "brainUserLevel": {
       "type": "boolean",

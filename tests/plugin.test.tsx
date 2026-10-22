@@ -218,23 +218,29 @@ test('/ambiflex page writes the page and asks Claude to publish it, then to repu
   mock.clock(on)
   const files = new Map<string, string>()
   bottoms(on, [], files)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
   await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Page' } as never)
   const first = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
-  await flush()
+  await turn($, 'end_turn')
   const page = [...files].find(([k]) => k.endsWith('.ambiflex/page.html'))?.[1]
   expect(String((first as { text?: unknown }).text)).toContain('publish')
-  expect(String((first as { context?: string[] }).context?.[0])).toContain('Publish the interactive Ambiflex page')
+  // A command starts no turn: the publish request is submitted as a prompt, not left in the context.
+  expect(prompts.pop()).toContain('Publish the interactive Ambiflex page')
   expect(page).toContain('<title>Ambiflex</title>')
   expect(page).toContain(`const PAGE_VERSION = '${VERSION}'`)
   expect(page).not.toContain('__AMBIFLEX_VERSION__')
   files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/x"}')
-  const again = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
-  expect(String((again as { context?: string[] }).context?.[0])).toContain('republish .ambiflex/page.html to that same URL')
-  expect(String((again as { context?: string[] }).context?.[0])).toContain('check it is this project')
+  await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  await turn($, 'end_turn')
+  const again = String(prompts.pop())
+  expect(again).toContain('republish .ambiflex/page.html to that same URL')
+  expect(again).toContain('check it is this project')
   // A page recorded for another project is never reused: a new page is published instead.
   files.set(String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json'), '{"url":"https://claude.ai/artifact/other","project":"some-other-project"}')
-  const other = await $.command.run({ command: 'ambiflex', args: 'page' } as never)
-  const ask = String((other as { context?: string[] }).context?.[0])
+  await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  await turn($, 'end_turn')
+  const ask = String(prompts.pop())
   expect(ask).toContain('as a NEW artifact')
   expect(ask).not.toContain('artifact/other')
 })
@@ -464,13 +470,40 @@ test('newerVersion compares x.y.z', async () => {
 test('/ambiflex altitude briefs the strongest model; a review is recorded, then decided', async ($, on) => {
   mock.clock(on)
   bottoms(on)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
   await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
   await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Track', lens: 'altitude', weight: 5 } as never)
-  const r = await $.command.run({ command: 'ambiflex', args: 'altitude' } as never) as { text?: string; context?: string[] }
+  const r = await $.command.run({ command: 'ambiflex', args: 'altitude' } as never) as { text?: string }
+  await turn($, 'end_turn')
   expect(String(r.text)).toContain('Taking altitude')
-  expect(String(r.context?.[0])).toContain('model "fable"')
-  expect(String(r.context?.[0])).toContain('PROOF: 0 %')
+  expect(String(prompts[0])).toContain('model "fable"')
+  expect(String(prompts[0])).toContain('PROOF: 0 %')
   await $.tool.call({ tool: 'mcp__ambiflex__tree_review_submit', diagnosis: 'No criterion.', by: 'fable', proposals: [{ kind: 'update', node: 'n1', fields: { acceptance: 'WER < 30 %' }, why: 'unmeasurable', gain: 10 }] } as never)
   const d = await $.tool.call({ tool: 'mcp__ambiflex__tree_review_decide', ids: ['p1'], accept: true } as never) as { result?: string }
   expect(String(d.result)).toContain('p1 accepted')
+})
+
+test('a page published by an older version is republished by the project session, once', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  const toasts: string[] = []
+  bottoms(on, toasts, files)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.command.run({ command: 'ambiflex', args: 'page' } as never)
+  await turn($, 'end_turn')
+  const project = String(prompts.pop()).match(/"project": "([^"]*)"/)![1]
+  const rec = String([...files.keys()].find(k => k.endsWith('page.html'))).replace('page.html', 'artifact.json')
+  files.set(rec, JSON.stringify({ url: 'https://claude.ai/artifact/x', project, pageVersion: '0.16.0' }))
+  await turn($, 'end_turn')
+  await turn($, 'end_turn')
+  expect(prompts.filter(p => p.includes('republish')).length).toBe(1)
+  expect(toasts.some(t => t.includes('Republishing the page'))).toBe(true)
+  expect(prompts[0]).toContain(`"pageVersion": "${VERSION}"`)
+  // Up to date: nothing more.
+  files.set(rec, JSON.stringify({ url: 'https://claude.ai/artifact/x', project, pageVersion: VERSION }))
+  await turn($, 'end_turn')
+  expect(prompts.length).toBe(1)
 })

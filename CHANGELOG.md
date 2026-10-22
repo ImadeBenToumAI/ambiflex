@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.16.2
+
+- **`/ambiflex page` really publishes.** It used to leave its request in the command's context, which nothing reads until your next message: it said "Claude publishes it now" and the page did not change. The request now goes out as a prompt as soon as the command ends. Same fix for `/ambiflex altitude`.
+- **Pages republish themselves after an update.** `artifact.json` records which version published the page; after an update, the project's own session republishes it once (option `autoRepublish`, on by default; off gives a reminder). The page never lags behind the plugin, and its buttons answer the project's session.
+
 ## 0.16.1
 
 - **Model routing from the page.** A "Models: Off | Suggest | Auto" selector sets routing for the project (the new `tree_routing` tool does what `/ambiflex routing` does).
