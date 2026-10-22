@@ -31,6 +31,8 @@ type Ctx = {
   livePushedAt: number; liveOff: boolean; pushing: boolean
   pendingKick?: string; handOverLost: boolean
   usdAtStart: number; startedAt: number; warnedBudget: boolean
+  /** Model routing as this project set it with /ambiflex routing (wins over the plugin settings). */
+  routing?: Options['routing']; topModel?: string
   /** The model of the last request, for the usage readings. */
   compactDue?: boolean
   /** The brain's sources, read at most once a minute. */
@@ -38,6 +40,11 @@ type Ctx = {
   lastModel?: string
 }
 const sessions = new Map<string, Ctx>()
+// Project settings set from inside a session (/ambiflex routing …), where /plugin configure is not available.
+const SETTINGS_FILE = '.ambiflex/settings.json'
+const ROUTING_MODES = ['off', 'suggest', 'auto'] as const
+async function routingMode($: $): Promise<Options['routing']> { return (await ctx($)).routing ?? options.routing }
+async function topModelOf($: $): Promise<string> { return (await ctx($)).topModel ?? options.topModel }
 async function ctx($: $): Promise<Ctx> {
   const id = await $.session.id().catch(() => 'local')
   let c = sessions.get(id)
@@ -45,7 +52,10 @@ async function ctx($: $): Promise<Ctx> {
     c = { sid: id.slice(-6), livePushedAt: 0, liveOff: false, pushing: false, handOverLost: false, usdAtStart: 0, startedAt: 0, warnedBudget: false }
     sessions.set(id, c)
   }
-  if (c.root === undefined) { c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root)) }
+  if (c.root === undefined) {
+    c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root))
+    try { const p = JSON.parse((await $.fs.read(`${c.root}${SETTINGS_FILE}`).catch(() => '{}')) as string || '{}'); if (ROUTING_MODES.includes(p.routing)) c.routing = p.routing; if (typeof p.topModel === 'string') c.topModel = p.topModel } catch { /* no project settings */ }
+  }
   return c
 }
 const rootOf = async ($: $) => (await ctx($)).root ?? ''
@@ -62,8 +72,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.13.2'
-export const WHATS_NEW = 'a tidier tree on the page: rows are ordered so links cross as little as possible and children sit under their parents; drag a node to place it (kept after each update, Reset layout forgets it); closed nodes (abandoned, moved, superseded) are hidden until you press Show closed. Run /ambiflex page to republish the page.'
+export const VERSION = '0.13.3'
+export const WHATS_NEW = 'model routing from inside any session: /ambiflex routing suggest|auto|off [fable] sets it for the project (no /plugin configure needed, works remotely); the goal and the Altitude tracks now run on the strongest model at full effort.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -202,7 +212,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, ...(options.routing !== 'off' ? { routing: options.routing, routes: routes(next, await routingCap($)) } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, ...((await routingMode($)) !== 'off' ? { routing: await routingMode($), routes: routes(next, await routingCap($)) } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   if (await artifactUrl($, true)) await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
@@ -1022,14 +1032,14 @@ async function refreshStatus($: $, weekLeft?: number) {
   const t = await read($, tree)
   const id = mainNode(t)
   const n = id ? t.nodes.find(x => x.id === id) : undefined
-  const r = options.routing !== 'off' ? (n ? route(n, await routingCap($)) : undefined) : undefined
+  const r = (await routingMode($)) !== 'off' ? (n ? route(n, await routingCap($)) : undefined) : undefined
   const auto = t.auto.on ? `auto ${t.auto.turns}/${t.auto.maxTurns}` : undefined
   $.ui.status(statusLine({ auto, weekLeft, node: n ? `${n.id} ${n.title.slice(0, 24)}` : undefined, route: r }))
 }
 
 // Model routing: the cap is the top model setting, else the session's own model; nothing is routed above it.
 async function routingCap($: $): Promise<number> {
-  const t = tierOf(options.topModel)
+  const t = tierOf(await topModelOf($))
   if (t >= 0) return t
   return tierOf(await $.session.model().catch(() => ''))
 }
@@ -1092,6 +1102,22 @@ async function backfill($: $): Promise<string> {
   const usd = sessions.reduce((k, x) => k + (x.usd ?? 0), 0)
   const first = sessions.map(x => x.start).sort()[0].slice(0, 10)
   return `Backfill: ${sessions.length} past sessions since ${first} read from ${dir}: ${lines.skills.length} skill uses and changes, ${lines.brain.length} brain touches, $${usd.toFixed(2)} at API prices. Past sessions keep no usage-window readings, so their % of the week is unknown; it is measured from now on.`
+}
+
+/** /ambiflex routing [off|suggest|auto] [top model]: model routing for this project, kept in .ambiflex/settings.json. */
+async function setRouting($: $, mode?: string, top?: string): Promise<string> {
+  const c = await ctx($)
+  if (!mode) return `Model routing: ${await routingMode($)}${(await topModelOf($)) ? `, top model ${await topModelOf($)}` : ', top model: this session\'s'}. Change it with /ambiflex routing off|suggest|auto [haiku|sonnet|opus|fable].`
+  if (!(ROUTING_MODES as readonly string[]).includes(mode)) return `Unknown mode "${mode}": use off, suggest or auto.`
+  if (top && tierOf(top) < 0) return `Unknown model "${top}": use haiku, sonnet, opus or fable.`
+  c.routing = mode as Options['routing']
+  if (top) c.topModel = top
+  await $.fs.write(`${c.root}${SETTINGS_FILE}`, `${JSON.stringify({ routing: c.routing, ...(c.topModel ? { topModel: c.topModel } : {}) }, null, 2)}\n`)
+  // The page shows the routes at once; the status line too.
+  await save($, await read($, tree)).catch(() => undefined)
+  await refreshStatus($).catch(() => undefined)
+  const what = mode === 'off' ? 'one model throughout' : mode === 'suggest' ? 'each node shows the model and effort it needs' : 'each request runs on its node\'s model and effort'
+  return `Model routing: ${mode} (${what})${c.topModel ? `, never above ${c.topModel}` : ''}. Saved for this project in ${SETTINGS_FILE}.`
 }
 
 /** The wake word: "ambiflex …" (typed or dictated) in any session turns the method on for that prompt. */
@@ -1187,6 +1213,7 @@ ${outline(await read($, tree))}` }
     if (verb === 'page') { const r = await pageRequest($); return { text: r.text, context: [r.ask] } }
     if (verb === 'update') return { text: await selfUpdate($) }
     if (verb === 'backfill') return { text: await backfill($) }
+    if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
     await load($)
     await refreshGit($)
     await openPane($)
@@ -1296,7 +1323,7 @@ ${outline(await read($, tree))}` }
     const stored = await storedNode($, id)
     const lost = stored ? (['status', 'score', 'weight', 'seq', 'title'] as const).filter(k => input[k] !== undefined && JSON.stringify(stored[k]) !== JSON.stringify(node[k])) : ['the whole node']
     if (lost.length) return { result: `ERROR: ${id} was not stored as given (${lost.join(', ')} differ on disk). Run tree_get and retry.` }
-    if (options.routing !== 'off' && node.lens === 'step' && !node.model && (isNew || input.title !== undefined || input.detail !== undefined)) classify($, id).catch(() => undefined)
+    if ((await routingMode($)) !== 'off' && node.lens === 'step' && !node.model && (isNew || input.title !== undefined || input.detail !== undefined)) classify($, id).catch(() => undefined)
     return { result: `${id} stored: ${echo(node)}${notes.length ? `. Note: ${notes.join('; ')}.` : ''}` }
   })
 
@@ -1391,7 +1418,7 @@ ${outline(await read($, tree))}` }
     let input = e
     if (id) {
       const wt = await branchFor($, id).catch(() => undefined)
-      if (options.routing === 'auto') {
+      if ((await routingMode($)) === 'auto') {
         const n = (await read($, tree)).nodes.find(x => x.id === id)
         if (n) { const r = route(n, await routingCap($)); input = { ...input, model: r.model, effort: r.effort } as typeof e }
       }
@@ -1433,7 +1460,7 @@ ${outline(await read($, tree))}` }
   // Each model request is a loop thinking; each tool call is what it does.
   on('turn.step', async function* ($, e, next) {
     await noteActivity($, e.agentId, { phase: 'thinking', label: '' }).catch(() => undefined)
-    const r = options.routing === 'auto' ? await stepRoute($, e.agentId).catch(() => undefined) : undefined
+    const r = (await routingMode($)) === 'auto' ? await stepRoute($, e.agentId).catch(() => undefined) : undefined
     const c = await ctx($)
     c.lastModel = r?.model ?? e.model
     if (!r) return yield* next(e)

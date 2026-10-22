@@ -37,6 +37,7 @@ Claude fills the tree through the tools `tree_set_goal`, `tree_upsert`, `tree_me
 | `/ambiflex` | Open the panel (or draw the tree inline on mobile) |
 | `/ambiflex page` | Publish (or republish) the interactive page for this project |
 | `/ambiflex backfill` | Read this project's past sessions on this machine (Claude Code's own transcripts) into the Usage, Agent OS and Growth views: cost, models, skill uses and changes. Each session is read once. |
+| `/ambiflex routing [off\|suggest\|auto] [model]` | Model routing for this project, from inside any session (also remote ones): `suggest` shows each node's model and effort, `auto` runs each request on it; the optional model caps it (`fable`, `opus`…). Without arguments, shows the current setting. |
 | `/ambiflex update` | Update the plugin from its marketplace; then `/reload-plugins` loads it in the same session |
 | `/ambiflex auto [turns]` | Run the plan without approval; optional turn budget (default 40) |
 | `/ambiflex stop` | Stop auto mode |

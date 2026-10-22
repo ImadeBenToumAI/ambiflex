@@ -424,3 +424,22 @@ test('the anonymous install count fires once per machine, never in the cloud or 
   expect(hits.length).toBe(1)
 })
 
+
+test('/ambiflex routing sets model routing for the project, and the page then carries each node\'s route', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  bottoms(on, [], disk, '/p/')
+  on('session.model', async () => ({ value: 'claude-fable-5-1' }))
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Durable outcome', lens: 'altitude' } as never)
+  const shown = await $.command.run({ command: 'ambiflex', args: 'routing' } as never) as { text: string }
+  expect(shown.text).toContain('Model routing: off')
+  const set = await $.command.run({ command: 'ambiflex', args: 'routing suggest fable' } as never) as { text: string }
+  expect(set.text).toContain('Model routing: suggest')
+  expect(JSON.parse(disk.get('/p/.ambiflex/settings.json') ?? '{}')).toEqual({ routing: 'suggest', topModel: 'fable' })
+  const snap = JSON.parse(disk.get('/p/.ambiflex/tree.json') ?? '{}')
+  expect(snap.routing).toBe('suggest')
+  expect(snap.routes?.n1).toMatchObject({ model: 'fable', effort: 'max' })
+  const bad = await $.command.run({ command: 'ambiflex', args: 'routing turbo' } as never) as { text: string }
+  expect(bad.text).toContain('Unknown mode')
+})

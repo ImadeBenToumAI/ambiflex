@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.13.3
+
+- **`/ambiflex routing [off|suggest|auto] [model]`.** It sets model routing for the project from inside any session, remote ones included, where `/plugin configure` is not available.
+  - The setting is kept in `.ambiflex/settings.json` and applies at once: the page shows each node's model right away.
+  - Without arguments, it shows the current setting.
+- **The goal and the Altitude tracks run on the strongest model at full effort** (Fable · max, within the top model). Depth and Range stay on Opus · high.
+
 ## 0.13.2
 
 A tidier tree on the page.
