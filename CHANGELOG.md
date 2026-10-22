@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.17.0
+
+- **The page follows the session for real.**
+  - A heartbeat: the page header says "session working · 9 s ago", "idle", or "no signal for 20 min" with what to do.
+  - Each node shows its task list (Claude Code's tasks or todos): "1/3 · current task" in the working strip, the full list with who runs each on the node sheet.
+  - Every subagent shows on a node: one that names no `#node` works for the node in hand.
+- **Sync that does not give up.** A failed write to the page is retried every 2 minutes with its reason kept, instead of switching live activity off for the whole session; a reply that merely contained the word "error" no longer counts as a failure; pages recorded before 0.14 (no project in `artifact.json`) receive activity again.
+- **`/ambiflex doctor`** says whether the page receives this session's activity, since when, and if not why. If it reports a refused permission, add `ArtifactData` to `permissions.allow` in `~/.claude/settings.json`.
+
 ## 0.16.4
 
 - **Page clicks reach Claude.** The page asked once, at load, whether a Claude session was listening, before that session was known, and kept "no" for the whole visit; a second click within 3 s was queued silently, and nothing read the queue.

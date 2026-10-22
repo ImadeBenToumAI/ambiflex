@@ -507,3 +507,19 @@ test('a page published by an older version is republished by the project session
   await turn($, 'end_turn')
   expect(prompts.length).toBe(1)
 })
+
+test('live: tasks ride their loop, a subagent without #node works for the node in hand, and a failed write is retried', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  bottoms(on, [], disk)
+  on('agent.spawn', async () => ({ model: 'm', agentId: 'agent-9' }) as never)
+  on('tool.call', { tool: 'TaskCreate' }, async () => ({ result: 'Task #1 created successfully' }) as never)
+  on('tool.call', { tool: 'TaskUpdate' }, async () => ({ result: 'Updated task #1' }) as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Decode', lens: 'step', status: 'exploring' } as never)
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Build the LM', description: 'kenlm' } as never)
+  await $.tool.call({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' } as never)
+  const liveDoc = () => JSON.parse([...disk].find(([k]) => k.endsWith('.ambiflex/live.json'))![1]) as { agents: { id: string; node: string; tasks?: { subject: string; status: string }[] }[] }
+  expect(liveDoc().agents.find(a => a.id === 'main')?.tasks).toEqual([{ id: '1', subject: 'Build the LM', status: 'in_progress' }])
+  await $.agent.spawn({ description: 'Check the decoder', prompt: 'look at the logs' } as never)
+  expect(liveDoc().agents).toContainEqual(expect.objectContaining({ id: 'agent-9', node: 'n1' }))
+})

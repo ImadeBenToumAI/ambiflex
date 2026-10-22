@@ -32,6 +32,8 @@ type Ctx = {
   /** Set when the session is opened on a folder that holds several projects: what to tell the user. */
   warning?: string; blocked?: boolean
   livePushedAt: number; liveOff: boolean; pushing: boolean
+  liveRetryAt?: number; syncReason?: string; syncOkAt?: string; syncFailedAt?: string; busy?: boolean
+  tasks?: Record<string, { id: string; subject: string; status: string }[]>
   pendingKick?: string; handOverLost: boolean
   usdAtStart: number; startedAt: number; warnedBudget: boolean
   /** Model routing as this project set it with /ambiflex routing (wins over the plugin settings). */
@@ -75,8 +77,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.16.4'
-export const WHATS_NEW = 'Page clicks reach Claude again (the page asks at each click whether a session listens, says Not sent when none does, and the project session runs queued clicks); estimates read m as months and no longer count waiting time.'
+export const VERSION = '0.17.0'
+export const WHATS_NEW = 'The page follows the session for real: a heartbeat says whether the session works, idles or no longer syncs (and why), each node shows its task list and subagents, and /ambiflex doctor says whether the page receives the activity.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -484,7 +486,12 @@ async function artifactUrl($: $, strict = false): Promise<string | undefined> {
     const rec = JSON.parse(raw) as { url?: string; project?: string }
     // A page recorded for another project (written while sessions were mixed) is never this one's.
     if (rec.project && rec.project !== await projectName($)) return undefined
-    // Automatic writes go only to a page whose record names this project.
+    // A record from before 0.14 has no project: it sits in this project's folder, so it is this project's page;
+    // the name is written in once, so automatic writes (live activity, tree) reach the page again.
+    if (rec.url && !rec.project) {
+      rec.project = await projectName($)
+      await $.fs.write(`${await rootOf($)}${ARTIFACT_FILE}`, `${JSON.stringify(rec)}\n`).catch(() => undefined)
+    }
     if (strict && rec.project !== await projectName($)) return undefined
     return rec.url || undefined
   } catch { return undefined }
@@ -518,7 +525,10 @@ async function pushLive($: $, force = false) {
   c.pushing = true
   try {
     const map = await read($, live)
-    const doc = { at: new Date(now).toISOString(), agents: Object.entries(map).map(([id, a]) => ({ id, ...a })) }
+    // at is the heartbeat: the page tells a live session from a silent one by it; busy says a turn is running.
+    const doc = { at: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, session: c.sid,
+      agents: Object.entries(map).map(([id, a]) => ({ id, ...a, ...(c.tasks?.[id]?.length ? { tasks: c.tasks[id] } : {}) })),
+      ...(c.tasks?.main?.length && !map.main ? { tasks: c.tasks.main } : {}) }
     await $.fs.write((await LIVE($)), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
     await pushDoc($, 'live', doc, true)
   } finally {
@@ -527,14 +537,21 @@ async function pushLive($: $, force = false) {
 }
 
 const docVersions: Record<string, number | undefined> = {}
-const failed = (r: unknown) => !r || /conflict|changed since|refused|current version|error/i.test(JSON.stringify(r))
+// A write went through only when the tool says it committed: the reply also echoes data, which may hold any word.
+const failed = (r: unknown) => !r || !/committed/i.test(typeof r === 'string' ? r : JSON.stringify((r as { result?: unknown })?.result ?? r))
+const reasonOf = (r: unknown) => {
+  const t = JSON.stringify(r ?? 'no answer')
+  return /denied|permission/i.test(t) ? 'permission refused for ArtifactData: allow it in your settings' : /not found|404/i.test(t) ? 'page not found' : /changed since|conflict|version/i.test(t) ? 'version conflict' : 'write failed'
+}
 
 /** Writes one doc of the page's store ("<collection>/current"), pinned to the version last seen. */
 async function pushDoc($: $, collection: string, data: Record<string, unknown>, strict = false) {
   if ((await ctx($)).blocked) return
   const c = await ctx($)
-  const url = c.liveOff ? undefined : await artifactUrl($, strict)
-  if (!url) return
+  // After a failure the page is left alone for two minutes, then tried again: never off for the whole session.
+  if (c.liveOff && Date.now() < (c.liveRetryAt ?? 0)) return
+  const url = await artifactUrl($, strict)
+  if (!url) { c.syncReason = 'no page recorded for this project (/ambiflex page)'; return }
   const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection, doc_id: 'current', data, ...(docVersions[`${url}#${collection}`] ? { if_version: docVersions[`${url}#${collection}`] } : {}) } as never)
   let r = await set().catch(() => undefined)
   if (failed(r)) {
@@ -542,8 +559,9 @@ async function pushDoc($: $, collection: string, data: Record<string, unknown>, 
     const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection, doc_id: 'current' } as never).catch(() => undefined)
     docVersions[`${url}#${collection}`] = versionIn(got)
     r = await set().catch(() => undefined)
-    if (failed(r)) { c.liveOff = true; return }
+    if (failed(r)) { c.liveOff = true; c.liveRetryAt = Date.now() + 120e3; c.syncReason = reasonOf(r); c.syncFailedAt = new Date().toISOString(); return }
   }
+  c.liveOff = false; c.syncReason = undefined; c.syncOkAt = new Date().toISOString()
   docVersions[`${url}#${collection}`] = versionIn(r) ?? docVersions[`${url}#${collection}`]
 }
 
@@ -819,6 +837,40 @@ async function registerTools($: $) {
     await $.tool.register({ name, description, inputSchema: schema as Record<string, unknown> })
   }
   c.toolsVersion = VERSION
+}
+
+/**
+ * The task list of a loop (Claude Code's TaskCreate / TaskUpdate, or TodoWrite), kept per loop and shown on its node:
+ * what the node's work is made of, and which step is under way.
+ */
+async function noteTasks($: $, e: { tool: string; agentId?: string; subject?: string; description?: string; taskId?: string | number; status?: string; todos?: { content?: string; subject?: string; status?: string }[] }, ran: unknown) {
+  const c = await ctx($)
+  const key = e.agentId ?? 'main'
+  c.tasks = c.tasks ?? {}
+  let list = c.tasks[key] ?? []
+  if (e.tool === 'TodoWrite' && Array.isArray(e.todos)) list = e.todos.map((t, i) => ({ id: String(i + 1), subject: String(t.content ?? t.subject ?? '').slice(0, 120), status: String(t.status ?? 'pending') }))
+  else if (e.tool === 'TaskCreate') {
+    const id = String(JSON.stringify(ran ?? '').match(/#?(\d+)/)?.[1] ?? list.length + 1)
+    list = [...list, { id, subject: String(e.subject ?? e.description ?? '').slice(0, 120), status: 'pending' }]
+  } else if (e.tool === 'TaskUpdate') {
+    const id = String(e.taskId ?? '')
+    list = list.map(t => (t.id === id ? { ...t, ...(e.status ? { status: e.status } : {}), ...(e.subject ? { subject: e.subject.slice(0, 120) } : {}) } : t)).filter(t => t.status !== 'deleted')
+  }
+  c.tasks[key] = list.slice(-30)
+  await pushLive($, true)
+}
+
+/** `/ambiflex doctor`: whether the page receives this session's activity, since when, and if not why. */
+async function doctor($: $): Promise<string> {
+  const c = await ctx($)
+  const url = await artifactUrl($, true)
+  if (!url) return 'No page recorded for this project: /ambiflex page publishes it.'
+  await pushLive($, true).catch(() => undefined)
+  const lines = [`Page: ${url}`, `Plugin ${VERSION}, session ${c.sid}.`]
+  if (c.syncReason) lines.push(`NOT syncing: ${c.syncReason}${c.syncFailedAt ? ` (since ${c.syncFailedAt})` : ''}. Retried every 2 minutes.`)
+  else if (c.syncOkAt) lines.push(`Syncing: last write ${c.syncOkAt}. The page shows live activity, tasks and subagents.`)
+  else lines.push('No write yet in this session.')
+  return lines.join('\n')
 }
 
 /**
@@ -1355,7 +1407,7 @@ export const register: Register = (on, opts) => {
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
-      argumentHint: '[auto [turns] | stop | status | page | update]',
+      argumentHint: '[auto [turns] | stop | status | page | update | altitude | doctor]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -1373,6 +1425,7 @@ ${outline(await read($, tree))}` }
     // and a command may not submit a prompt while it holds its turn, so it goes out when that turn completes.
     if (verb === 'page') { const r = await pageRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'update') return { text: await selfUpdate($) }
+    if (verb === 'doctor') return { text: await doctor($) }
     if (verb === 'altitude') { const r = await altitudeRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'backfill') return { text: await backfill($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
@@ -1411,6 +1464,8 @@ ${outline(await read($, tree))}` }
   on('turn.start', async ($, e, next) => {
     await registerTools($).catch(() => undefined)
     if (e.agentId) return next(e)
+    ;(await ctx($)).busy = true
+    await pushLive($, true).catch(() => undefined)
     if (e.text.startsWith('[tree] Auto mode')) {
       ;(await ctx($)).pendingKick = undefined
       await countTurn($)
@@ -1428,7 +1483,9 @@ ${outline(await read($, tree))}` }
   // Hand the next node over once a turn ends in auto mode.
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
+    if (!e.agentId) (await ctx($)).busy = false
     await setLive($, e.agentId ?? 'main', null).catch(() => undefined)
+    if (!e.agentId) await pushLive($, true).catch(() => undefined)
     if (e.agentId) {
       // A spawned explorer reported: read its score, hand the node to review.
       const t = await read($, tree).catch(() => undefined)
@@ -1631,7 +1688,8 @@ ${outline(await read($, tree))}` }
     try {
       const agentId = started && 'agentId' in started ? started.agentId : undefined
       const t = await read($, tree)
-      const id = agentId && nodeRef(`${e.description ?? ''} ${e.prompt ?? ''}`, t)
+      // A subagent that names no node works for the node in hand: it is shown there rather than nowhere.
+      const id = agentId && (nodeRef(`${e.description ?? ''} ${e.prompt ?? ''}`, t) ?? mainNode(t))
       if (agentId && id) {
         const branch = t.nodes.find(n => n.id === id)?.branch
         await setLive($, agentId, { node: id, who: e.description || 'subagent', phase: 'starting', label: '', ...(branch ? { branch } : {}) })
@@ -1671,7 +1729,12 @@ ${outline(await read($, tree))}` }
 
   on('tool.call', async ($, e, next) => {
     if (!(await ctx($)).pushing && e.tool !== 'ArtifactData') await noteActivity($, e.agentId, { phase: 'tool', label: toolLabel(e as never) }).catch(() => undefined)
-    return next(e)
+    const ran = await next(e)
+    if (['TaskCreate', 'TaskUpdate', 'TodoWrite'].includes(e.tool)) await noteTasks($, e as never, ran).catch(() => undefined)
+    // A heartbeat every 30 s while work goes on, even when the activity line does not change.
+    const c = await ctx($)
+    if (!c.pushing && Date.now() - c.livePushedAt > 30e3) await pushLive($, true).catch(() => undefined)
+    return ran
   })
 
   // Agent OS: a skill invoked, or a file under .claude/skills/<name>/ written, by this session or one of its agents.

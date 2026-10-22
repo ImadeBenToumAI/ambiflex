@@ -107,6 +107,8 @@ export type LiveActivity = {
   label: string
   branch?: string
   at: string
+  /** The loop's task list (TaskCreate / TodoWrite), newest last. */
+  tasks?: { id: string; subject: string; status: string }[]
 }
 
 /** One commit for the page's Git graph: hash, parent hashes, refs ("HEAD -> main", "origin/x", "tag: v1"), subject, author, ISO date. */
