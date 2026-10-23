@@ -66,7 +66,7 @@ async function ctx($: $): Promise<Ctx> {
     sessions.set(id, c)
   }
   if (c.root === undefined) {
-    c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root))
+    c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root)); await parkBlocked($, c)
     try { const p = JSON.parse((await $.fs.read(`${c.root}${SETTINGS_FILE}`).catch(() => '{}')) as string || '{}'); if (ROUTING_MODES.includes(p.routing)) c.routing = p.routing; if (typeof p.topModel === 'string') c.topModel = p.topModel } catch { /* no project settings */ }
   }
   return c
@@ -85,7 +85,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.20.4'
+export const VERSION = '0.21.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -182,7 +182,40 @@ async function mainCheckout($: $, r: string): Promise<string | undefined> {
   return top === r ? undefined : `${top}/`
 }
 
+/**
+ * Sessions attached to a project folder with /ambiflex project: ~/.claude/ambiflex-sessions.json maps a session id
+ * (or its last six characters, as the split script writes them) to the folder. Nothing is written in the repository.
+ */
+const SESSIONS_FILE = '.claude/ambiflex-sessions.json'
+async function homeDir($: $): Promise<string | undefined> {
+  return await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
+}
+async function readSessions($: $): Promise<Record<string, string>> {
+  const home = await homeDir($); if (!home) return {}
+  try { const m = JSON.parse(((await $.fs.read(`${home}/${SESSIONS_FILE}`).catch(() => '')) as string) || '{}'); return m && typeof m === 'object' ? m : {} } catch { return {} }
+}
+async function mappedProject($: $): Promise<string | undefined> {
+  const id = await $.session.id().catch(() => '')
+  if (!id) return undefined
+  const map = await readSessions($)
+  const key = Object.keys(map).find(k => k === id || (k.length >= 6 && id.endsWith(k)))
+  const dir = key ? String(map[key]).replace(/\/$/, '') : ''
+  return dir && (await $.fs.exists(dir).catch(() => false) || await $.fs.exists(`${dir}/${LOG_FILE}`).catch(() => false)) ? `${dir}/` : undefined
+}
+
+/**
+ * A session that has no project of its own (a folder or repository holding several) writes nothing there: its
+ * side files (live activity, Git and brain snapshots) go to a scratch folder under ~/.claude until it is attached.
+ */
+async function parkBlocked($: $, c: Ctx) {
+  if (!c.blocked) return
+  const home = await homeDir($)
+  c.root = home ? `${home}/.claude/ambiflex-unattached/${c.sid}/` : '/dev/null/'
+}
+
 async function resolveRoot($: $): Promise<string> {
+  const mapped = await mappedProject($)
+  if (mapped) return mapped
   const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
   const main = r ? await mainCheckout($, r) : undefined
   if (main) return main
@@ -205,7 +238,17 @@ async function resolveRoot($: $): Promise<string> {
 async function workspaceCheck($: $, root: string): Promise<{ warning?: string; blocked?: boolean }> {
   const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
   const base = r ? `${r}/` : ''
-  if (await $.fs.exists(`${base}.git`).catch(() => false)) return {}
+  if (await mappedProject($)) return {}
+  if (await $.fs.exists(`${base}.git`).catch(() => false)) {
+    // A repository that holds several projects, each with its own tree: the session must say which one is its own.
+    if (root !== base) return {}
+    const list0 = await $.fs.list(r || undefined).catch(() => [] as { name: string; kind: string }[])
+    const projects: string[] = []
+    for (const e of list0) if (e.kind === 'dir' && !e.name.startsWith('.') && await $.fs.exists(`${base}${e.name}/${LOG_FILE}`).catch(() => false)) projects.push(e.name)
+    if (projects.length < 2) return {}
+    const shared = await $.fs.exists(`${base}${LOG_FILE}`).catch(() => false)
+    return { blocked: true, warning: `Ambiflex: this session is opened on a repository that holds ${projects.length} projects with their own tree (${projects.slice(0, 6).join(', ')}).${shared ? ' A shared tree is also at its root.' : ''} Attach this session to its project with /ambiflex project <folder>, then run /ambiflex page in it.` }
+  }
   const entries = await $.fs.list(r || undefined).catch(() => [] as { name: string; kind: string }[])
   const repos: string[] = []
   for (const e of entries) if (e.kind === 'dir' && !e.name.startsWith('.') && await $.fs.exists(`${base}${e.name}/.git`).catch(() => false)) repos.push(e.name)
@@ -224,6 +267,7 @@ async function load($: $) {
   c.root = await resolveRoot($)
   c.warning = undefined; c.blocked = undefined
   Object.assign(c, await workspaceCheck($, c.root))
+  await parkBlocked($, c)
   // A workspace folder's tree is nobody's: show nothing rather than another project's tree.
   if (c.blocked) { await update($, tree, () => emptyTree()); return }
   const hasLog = await $.fs.exists((await LOG($))).catch(() => false)
@@ -1005,6 +1049,30 @@ async function localPage($: $, arg?: string): Promise<string> {
   return `Local page: http://127.0.0.1:${conf.port}/?k=${conf.key}\nIt reads this session's state from disk every second and its buttons reach this session directly. In Chrome: menu > Cast, save and share > Install page as app, for a window of its own. /ambiflex local stop stops it.`
 }
 
+/** `/ambiflex project [folder|clear]`: attaches this session to a project folder (its tree, its page), or says which one it uses. */
+async function attachProject($: $, arg?: string): Promise<string> {
+  const c = await ctx($)
+  const id = await $.session.id().catch(() => '')
+  const home = await homeDir($)
+  if (!arg) return `This session uses the tree in ${(c.root || './').replace(/\/$/, '') || '.'}${(await mappedProject($)) ? ' (attached with /ambiflex project)' : ''}. Attach it to another project with /ambiflex project <folder>, or detach it with /ambiflex project clear.`
+  if (!id || !home) return 'Cannot attach: this host gives no session id or home folder.'
+  const map = await readSessions($)
+  for (const k of Object.keys(map)) if (k === id || (k.length >= 6 && id.endsWith(k))) delete map[k]
+  if (arg !== 'clear') {
+    const r = ((await $.session.root().catch(() => '')) as string).replace(/\/$/, '')
+    const dir = (arg.startsWith('/') ? arg : `${r}/${arg}`).replace(/\/+$/, '')
+    if (!(await $.fs.exists(dir).catch(() => false)) && !(await $.fs.exists(`${dir}/${LOG_FILE}`).catch(() => false))) return `No folder ${dir}: nothing changed.`
+    map[id] = dir
+  }
+  await $.fs.write(`${home}/${SESSIONS_FILE}`, `${JSON.stringify(map, null, 2)}\n`)
+  c.root = undefined
+  await load($)
+  const t = await read($, tree)
+  const page = await artifactUrl($, true).catch(() => undefined)
+  if (arg === 'clear') return `Detached: this session uses the tree of the folder it was opened on again (${(c.root || './').replace(/\/$/, '')}).`
+  return `This session is attached to ${c.root!.replace(/\/$/, '')}: ${t.goal || t.nodes.length ? `tree "${t.goal.slice(0, 80)}", ${t.nodes.length} nodes` : 'no tree yet there'}${page ? `, page ${page}` : ''}. Run /ambiflex page here so this session publishes and watches that project's page.`
+}
+
 /** Buttons pressed on the local page wait in .ambiflex/actions.jsonl: taken in order, once, then handed to this session. */
 async function drainLocal($: $, force = false) {
   const c = await ctx($) as { drainedAt?: number }
@@ -1574,6 +1642,7 @@ ${outline(await read($, tree))}` }
     if (verb === 'update') return { text: await selfUpdate($) }
     if (verb === 'doctor') return { text: await doctor($) }
     if (verb === 'local') return { text: await localPage($, arg) }
+    if (verb === 'project') return { text: await attachProject($, arg) }
     if (verb === 'altitude') { const r = await altitudeRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'backfill') return { text: await backfill($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }

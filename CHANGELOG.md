@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.21.0
+
+- **One project per session.** `/ambiflex project <folder>` attaches a session to its project folder: its tree, its page and its live activity then live there. The choice is kept per session in `~/.claude/ambiflex-sessions.json`, never in the repository. `/ambiflex project` alone says which folder the session uses; `/ambiflex project clear` detaches it.
+- **Nothing at the root of a shared repository.** A session opened on a repository that holds several project trees is asked to attach to one, and writes nothing at the repository root until it does.
+- **Split a tree that several sessions shared.** `tools/ambiflex-split.py` (Python, no dependency) shows which sessions wrote to a root `.ambiflex`, plans the split (a dry run), then with `--apply` backs it up to `~/.claude/ambiflex-backups/`, writes each project's tree and page record in its folder, attaches each session, and removes the root folder. Then, in each session: `/reload-plugins` and `/ambiflex page`, so each page is watched by its own session.
+
 ## 0.20.4
 
 - **Node buttons say what happened.** After Validate, Deeper, Wider, Higher, Spawn agent, Abandon or Merge, the node's sheet follows the request: sent (or queued), then "Claude got it" as soon as the session starts working on it, then cleared with a "updated by Claude" note when the node changes. After two minutes without a sign, it explains that the page sends to the Claude session that watches it, suggests `/ambiflex page` in the session you work in, and offers the request to paste.
