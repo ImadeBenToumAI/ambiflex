@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.20.4
+
+- **Node buttons say what happened.** After Validate, Deeper, Wider, Higher, Spawn agent, Abandon or Merge, the node's sheet follows the request: sent (or queued), then "Claude got it" as soon as the session starts working on it, then cleared with a "updated by Claude" note when the node changes. After two minutes without a sign, it explains that the page sends to the Claude session that watches it, suggests `/ambiflex page` in the session you work in, and offers the request to paste.
+
 ## 0.20.3
 
 - **Text stays in its card.** A node's title and bottom line are cut to the width the font actually takes, with an ellipsis (the full text on hover), and the bottom line stops short of the importance bars. Cards are a little wider.

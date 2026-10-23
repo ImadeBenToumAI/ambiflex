@@ -587,3 +587,17 @@ test('overhead: a plugin-started turn is measured, a user turn is not, and docto
   expect(r).toContain('1 tree calls')
   expect(r).toContain('1 plugin turns')
 })
+
+test('a turn started by a page action is acknowledged in the live document', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  bottoms(on, [], disk, '/a')
+  on('session.usage', async () => ({ value: { cost: { usd: 0 } } }))
+  on('tool.register', async () => ({ value: undefined }))
+  on('command.register', async () => ({ value: undefined }))
+  on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
+  await $.session.start({ source: 'startup', cwd: '/a' } as never)
+  await $.turn.start({ text: '[Artifact comment sent to Claude]\n[tree] Spawn a subagent to explore n12 "Parser" (put #n12 in its description).', turnId: 't' } as never)
+  const live = JSON.parse(disk.get('/a/.ambiflex/live.json')!)
+  expect(live.ack.text).toContain('Spawn a subagent to explore n12')
+})

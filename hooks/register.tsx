@@ -48,6 +48,8 @@ type Ctx = {
   lastModel?: string
   /** What Ambiflex itself adds to this session's bill (see overhead.ts). */
   ledger?: Ledger; fixedTok?: number; lastCtxTok?: number; overhead?: Overhead
+  /** The last page action ([tree] …) a main turn started with: the page shows it was received. */
+  ack?: { text: string; at: string }
   turnUsd?: number; turnKind?: 'user' | 'plugin' | 'mixed' | 'auto'
 }
 const sessions = new Map<string, Ctx>()
@@ -83,7 +85,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.20.3'
+export const VERSION = '0.20.4'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -568,7 +570,7 @@ async function pushLive($: $, force = false) {
     // at is the heartbeat: the page tells a live session from a silent one by it; busy says a turn is running.
     const doc = { at: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, session: c.sid,
       agents: Object.entries(map).map(([id, a]) => ({ id, ...a, ...(c.tasks?.[id]?.length ? { tasks: c.tasks[id] } : {}) })),
-      ...(c.tasks?.main?.length && !map.main ? { tasks: c.tasks.main } : {}) }
+      ...(c.tasks?.main?.length && !map.main ? { tasks: c.tasks.main } : {}), ...(c.ack ? { ack: c.ack } : {}) }
     await $.fs.write((await LIVE($)), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
     await pushDoc($, 'live', doc, true)
   } finally {
@@ -1611,6 +1613,9 @@ ${outline(await read($, tree))}` }
     await registerTools($).catch(() => undefined)
     if (e.agentId) return next(e)
     ;(await ctx($)).busy = true
+    // A turn started by a page action (a comment or a queued click): say so on the page at once.
+    const asked = /\[tree\] ([^\n]{1,240})/.exec(e.text)
+    if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString() }
     await pushLive($, true).catch(() => undefined)
     await startTurnCost($, e.text).catch(() => undefined)
     if (e.text.startsWith('[tree] Auto mode')) {
