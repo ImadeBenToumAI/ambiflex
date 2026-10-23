@@ -144,6 +144,20 @@ def main():
         print(f'  session {sid}: dropped (kept only in the backup)')
     print(f'  sessions attached in {mapping_file}: ' + ', '.join(f'{s} -> {f}' for s, f in assign.items()))
     print(f'  root .ambiflex copied to {backup}, then removed')
+    # Never delete live git worktrees: the plugin puts each explored node's worktree under .ambiflex/worktrees/.
+    wt_root = os.path.join(root, 'worktrees')
+    live = []
+    if os.path.isdir(wt_root):
+        for dirpath, dirnames, filenames in os.walk(wt_root):
+            if '.git' in filenames or '.git' in dirnames:
+                live.append(os.path.relpath(dirpath, repo))
+                dirnames[:] = []
+    if live:
+        print('\nStop: the root .ambiflex holds git worktrees that git still knows about:\n  ' + '\n  '.join(live) +
+              '\nCommit or stash their changes, then for each one: git worktree remove <path> (or git worktree move it'
+              ' out of .ambiflex/), run from the repository it belongs to. Then run this script again.')
+        sys.exit(1)
+
     if not a.apply:
         print('\nDry run: nothing changed. Add --apply to do it.')
         return
