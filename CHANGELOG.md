@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.20.3
+
+- **Text stays in its card.** A node's title and bottom line are cut to the width the font actually takes, with an ellipsis (the full text on hover), and the bottom line stops short of the importance bars. Cards are a little wider.
+- **Criticality is violet, not red.** Critical nodes (importance 4-5) use violet for their bars and outline, so red only ever means blocked; lower importance bars are grey.
+
 ## 0.20.2
 
 - **A node at work stands out.** In the tree, a node something works on is now a light card with dark ink, in either theme, with its blinking halo around it; the other cards stay as they were.
