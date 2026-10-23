@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.20.1
+
+- **Weekly actives.** Beside the once-per-machine install count, Ambiflex now downloads that week's one-byte file (`install-ping/active-2026-W43.txt`, for example) once per machine per ISO week, at the first session of the week. Its download count is how many machines ran Ambiflex that week. Nothing else is sent; the same settings and variables turn it off (see Privacy in the README).
+- **The experimental harness is removed.** A comparison on 3 coding tasks × 3 runs (Sonnet, hidden tests as the judge) found it cost 3.2× a plain run and 2.1× Felix's method, for the same results and less proof (67 % against 87 %). `/ambiflex method`, the plan gate and the page's approval band are gone; Felix's method is the only one, and a settings file that still names the harness is ignored.
+
 ## 0.20.0
 
 - **An experimental harness method, beside Felix's.** `/ambiflex method ambitious|harness|both` picks the project's method; `ambitious` (Felix Rieseberg's altitude, depth, range) stays the default, unchanged. The harness is inspired by public guidance attributed to Andrej Karpathy; he did not write or endorse it.

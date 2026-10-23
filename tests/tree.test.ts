@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine } from '../hooks/overhead'
+import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
 import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
@@ -353,4 +354,11 @@ test('overhead: only what Ambiflex adds, as a range, with plugin turns measured 
   expect(o.share!.mid).toBeGreaterThan(o.usd.mid / 10)
   // A compaction drops what Ambiflex carried in context.
   expect(noteCompact(l).carriedTok).toBe(0)
+})
+
+test('weekly actives: ISO weeks and that week\'s asset', () => {
+  expect(isoWeek(new Date('2026-10-23T12:00:00Z'))).toBe('2026-W43')
+  expect(isoWeek(new Date('2027-01-01T12:00:00Z'))).toBe('2026-W53')
+  expect(isoWeek(new Date('2026-01-01T12:00:00Z'))).toBe('2026-W01')
+  expect(weekUrl('2026-W43')).toBe('https://github.com/ImadeBenToumAI/ambiflex/releases/download/install-ping/active-2026-W43.txt')
 })
