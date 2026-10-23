@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.20.1",
+  "version": "0.20.2",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"

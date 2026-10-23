@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.20.2
+
+- **A node at work stands out.** In the tree, a node something works on is now a light card with dark ink, in either theme, with its blinking halo around it; the other cards stay as they were.
+
 ## 0.20.1
 
 - **Weekly actives.** Beside the once-per-machine install count, Ambiflex now downloads that week's one-byte file (`install-ping/active-2026-W43.txt`, for example) once per machine per ISO week, at the first session of the week. Its download count is how many machines ran Ambiflex that week. Nothing else is sent; the same settings and variables turn it off (see Privacy in the README).
