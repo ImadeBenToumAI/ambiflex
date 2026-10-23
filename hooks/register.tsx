@@ -7,7 +7,7 @@ import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log
 import { PAGE_HTML } from './page'
 import { SERVER_PY, localShim, parseActions } from './local'
 import { buildUsage, parseSamples } from './usage'
-import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
+import { failures, MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
 import { SUMMARY_SCRIPT, backfillLines, parseSummaries, transcriptDir } from './backfill'
 import { buildBrain, describe, elementOf } from './brain'
@@ -40,6 +40,8 @@ type Ctx = {
   usdAtStart: number; startedAt: number; warnedBudget: boolean
   /** Model routing as this project set it with /ambiflex routing (wins over the plugin settings). */
   routing?: Options['routing']; topModel?: string
+  /** The method this project runs (/ambiflex method), and the goal whose plan the user approved (harness). */
+  method?: Method; planApproved?: string
   /** The model of the last request, for the usage readings. */
   compactDue?: boolean
   /** The brain's sources, read at most once a minute. */
@@ -52,6 +54,25 @@ type Ctx = {
 const sessions = new Map<string, Ctx>()
 // Project settings set from inside a session (/ambiflex routing …), where /plugin configure is not available.
 const SETTINGS_FILE = '.ambiflex/settings.json'
+
+// Methods: Felix Rieseberg's ambitious method (the default), an experimental harness inspired by public guidance
+// attributed to Andrej Karpathy (not written or endorsed by him), or both: Felix chooses the tracks, the harness runs each node.
+const METHODS = ['ambitious', 'harness', 'both'] as const
+type Method = typeof METHODS[number]
+const HARNESS = `# Ambiflex harness (experimental)
+Run the work as a harness, not one long chat. The plugin enforces three rules; the tree is the plan.
+1. Plan first, then pause: build the plan as tree nodes, then stop and ask the user to approve it (the page's "Approve plan" button or /ambiflex approve). No node can start before the plan of the current goal is approved; call tree_plan_approve only after the user said so.
+2. Checks before work: before a node starts, write its check: acceptance (the criterion a result must reach) or judge (the test, command or metric). A node without one cannot turn exploring.
+3. Three attempts, then stop: a node that failed three times (failed iterations or a failed replayed proof) is blocked with the reason and the evidence, and waits for the user. Do not retry it a fourth time.
+Keep the main context for decisions: give each node's work to a subagent with only the step, its files and its check, and bring back paths, verdicts and evidence. Report measured usage only; never infer savings.`
+const methodText = (m: Method) => m === 'harness' ? HARNESS : m === 'both' ? `${METHOD}
+
+${HARNESS}` : METHOD
+async function methodOf($: $): Promise<Method> { return (await ctx($)).method ?? 'ambitious' }
+async function writeSettings($: $) {
+  const c = await ctx($)
+  await $.fs.write(`${c.root}${SETTINGS_FILE}`, `${JSON.stringify({ routing: c.routing, ...(c.topModel ? { topModel: c.topModel } : {}), ...(c.method && c.method !== 'ambitious' ? { method: c.method } : {}), ...(c.planApproved ? { planApproved: c.planApproved } : {}) }, null, 2)}\n`)
+}
 const ROUTING_MODES = ['off', 'suggest', 'auto'] as const
 async function routingMode($: $): Promise<Options['routing']> { return (await ctx($)).routing ?? options.routing }
 async function topModelOf($: $): Promise<string> { return (await ctx($)).topModel ?? options.topModel }
@@ -64,7 +85,7 @@ async function ctx($: $): Promise<Ctx> {
   }
   if (c.root === undefined) {
     c.root = await resolveRoot($); Object.assign(c, await workspaceCheck($, c.root))
-    try { const p = JSON.parse((await $.fs.read(`${c.root}${SETTINGS_FILE}`).catch(() => '{}')) as string || '{}'); if (ROUTING_MODES.includes(p.routing)) c.routing = p.routing; if (typeof p.topModel === 'string') c.topModel = p.topModel } catch { /* no project settings */ }
+    try { const p = JSON.parse((await $.fs.read(`${c.root}${SETTINGS_FILE}`).catch(() => '{}')) as string || '{}'); if (ROUTING_MODES.includes(p.routing)) c.routing = p.routing; if (typeof p.topModel === 'string') c.topModel = p.topModel; if (METHODS.includes(p.method)) c.method = p.method; if (typeof p.planApproved === 'string') c.planApproved = p.planApproved } catch { /* no project settings */ }
   }
   return c
 }
@@ -82,7 +103,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.19.2'
+export const VERSION = '0.20.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -249,7 +270,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', ...(guard.overhead ? { overhead: guard.overhead } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', ...(guard.overhead ? { overhead: guard.overhead } : {}), method: guard.method ?? 'ambitious', planApproved: !!next.goal && guard.planApproved === next.goal }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   // pushDoc also keeps the local copy the local page reads, page or not.
@@ -841,6 +862,7 @@ async function registerTools($: $) {
     ['tree_routing', 'Sets model routing for the project (what /ambiflex routing does): off (one model), suggest (show each node\'s model and effort), auto (run each node on it). Optionally caps the top model.', {
       type: 'object', properties: { mode: { type: 'string', enum: ['off', 'suggest', 'auto'] }, top: { type: 'string', enum: ['haiku', 'sonnet', 'opus', 'fable'], description: 'Highest model routing may use.' } }, required: ['mode'],
     }],
+    ['tree_plan_approve', 'Records that the user approved the plan of the current goal (harness method). Call it only after the user said so, in their own words or with the page button.', { type: 'object', properties: {} }],
     ['tree_review_submit', 'Records a strategy review (from /ambiflex altitude): the diagnosis and the proposed changes. Nothing is applied: the user accepts or refuses each proposal.', {
       type: 'object',
       properties: {
@@ -1495,6 +1517,43 @@ async function backfill($: $): Promise<string> {
 }
 
 /** /ambiflex routing [off|suggest|auto] [top model]: model routing for this project, kept in .ambiflex/settings.json. */
+/** The harness's gate on a node about to start: an approved plan, a written check, fewer than three failures. */
+async function harnessGate($: $, t: Tree, id: string, input: Record<string, unknown>): Promise<string | undefined> {
+  if ((await methodOf($)) === 'ambitious') return undefined
+  const c = await ctx($)
+  const n = t.nodes.find(x => x.id === id)
+  if (!t.goal || c.planApproved !== t.goal) return `Not started (harness): the plan of this goal is not approved yet. Show the user the plan and ask them to approve it (the page's "Approve plan" button or /ambiflex approve); then start ${id}.`
+  if (!(input.acceptance ?? input.judge ?? n?.acceptance ?? n?.judge)) return `Not started (harness): ${id} has no check. Write its acceptance criterion or its judge (the test, command or metric) first, then start it.`
+  if (n && failures(n) >= 3) {
+    await commit($, { kind: 'upsert', input: { id, status: 'blocked', blockedOn: `the user: ${failures(n)} failed attempts` } })
+    return `Not started (harness): ${id} failed ${failures(n)} times and is now blocked. Tell the user what failed and the evidence; do not try again without their decision.`
+  }
+  return undefined
+}
+
+/** The user approved the plan of the current goal: nodes may start (harness). */
+async function approvePlan($: $): Promise<string> {
+  const c = await ctx($)
+  const t = await read($, tree)
+  if (!t.goal) return 'No goal yet: nothing to approve.'
+  c.planApproved = t.goal
+  await writeSettings($)
+  await save($, t).catch(() => undefined)
+  return `Plan approved for "${t.goal.slice(0, 80)}" (${t.nodes.filter(n => n.lens !== 'goal').length} nodes). Nodes may start; a new goal needs a new approval.`
+}
+
+/** `/ambiflex method [ambitious|harness|both]`: the project's method, saved in its settings. */
+async function setMethod($: $, mode?: string): Promise<string> {
+  const c = await ctx($)
+  if (!mode) return `Method: ${await methodOf($)}. Change it with /ambiflex method ambitious|harness|both (harness is experimental).`
+  if (!(METHODS as readonly string[]).includes(mode)) return `Unknown method "${mode}": use ambitious, harness or both.`
+  c.method = mode as Method
+  await writeSettings($)
+  await save($, await read($, tree)).catch(() => undefined)
+  const what = mode === 'ambitious' ? "Felix Rieseberg's method: altitude, depth, range" : mode === 'harness' ? 'the experimental harness: plan approval, checks before work, three attempts then stop' : 'both: Felix for the tracks, the harness to run each node'
+  return `Method: ${mode} (${what}). Saved for this project in ${SETTINGS_FILE}; the plugin enforces the harness rules now, and new sessions get its instructions.${mode !== 'ambitious' ? `\n\n${HARNESS}` : ''}`
+}
+
 async function setRouting($: $, mode?: string, top?: string): Promise<string> {
   const c = await ctx($)
   if (!mode) return `Model routing: ${await routingMode($)}${(await topModelOf($)) ? `, top model ${await topModelOf($)}` : ', top model: this session\'s'}. Change it with /ambiflex routing off|suggest|auto [haiku|sonnet|opus|fable].`
@@ -1502,7 +1561,7 @@ async function setRouting($: $, mode?: string, top?: string): Promise<string> {
   if (top && tierOf(top) < 0) return `Unknown model "${top}": use haiku, sonnet, opus or fable.`
   c.routing = mode as Options['routing']
   if (top) c.topModel = top
-  await $.fs.write(`${c.root}${SETTINGS_FILE}`, `${JSON.stringify({ routing: c.routing, ...(c.topModel ? { topModel: c.topModel } : {}) }, null, 2)}\n`)
+  await writeSettings($)
   // The page shows the routes at once; the status line too.
   await save($, await read($, tree)).catch(() => undefined)
   await refreshStatus($).catch(() => undefined)
@@ -1565,6 +1624,8 @@ ${outline(await read($, tree))}` }
     if (verb === 'local') return { text: await localPage($, arg) }
     if (verb === 'altitude') { const r = await altitudeRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'backfill') return { text: await backfill($) }
+    if (verb === 'method') return { text: await setMethod($, arg) }
+    if (verb === 'approve') return { text: await approvePlan($) }
     if (verb === 'routing') return { text: await setRouting($, arg, String(e.args ?? '').trim().split(/\s+/)[2]) }
     await load($)
     await refreshGit($)
@@ -1591,7 +1652,7 @@ ${outline(await read($, tree))}` }
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     const w = (await ctx($)).warning
-    return { sections: [...composed.sections, { id: `${PLUGIN}:method`, text: w ? `${METHOD}\n\nWARNING for this session: ${w} Say so to the user before any tree work.` : METHOD, scope: 'session' as const }] }
+    return { sections: [...composed.sections, { id: `${PLUGIN}:method`, text: w ? `${methodText(await methodOf($))}\n\nWARNING for this session: ${w} Say so to the user before any tree work.` : methodText(await methodOf($)), scope: 'session' as const }] }
   })
 
   // A queued hand-over that did not start the next main turn was lost by the host: say so once,
@@ -1693,6 +1754,7 @@ ${outline(await read($, tree))}` }
     // An update to an id this tree does not have is a mistake (another project's tree, a typo), not a new node.
     if (input.id && isNew && !input.title) return { result: `No node ${input.id} in this tree (${before.nodes.length} nodes, goal "${before.goal.slice(0, 60)}"). Nothing written. Check the id with tree_get, or give a title to create a new node.` }
     const id = (input.id as string | undefined) ?? nextId(before)
+    if (input.status === 'exploring') { const refused = await harnessGate($, before, id, input); if (refused) return { result: refused } }
     const after = await commit($, { kind: 'upsert', input: { ...(input as never as object), id } as never, isNew })
     const node = after.nodes.find(n => n.id === id)!
     const notes: string[] = []
@@ -1748,6 +1810,8 @@ ${outline(await read($, tree))}` }
     return { result: `Kept ${kept.id} "${kept.title}" (score ${kept.score}); abandoned ${dropped.map(n => n.id).join(', ') || 'none'}. Merge ${kept.id} into ${parent} with tree_merge once its results are folded in.` }
   })
 
+  on('tool.call', { tool: 'mcp__ambiflex__tree_plan_approve' }, async $ => ({ result: await approvePlan($) }))
+
   on('tool.call', { tool: 'mcp__ambiflex__tree_iterate' }, async ($, e) => {
     const { id = '', result = '', value, passed = false } = e as unknown as { id?: string; result?: string; value?: number; passed?: boolean }
     const t = await read($, tree)
@@ -1755,6 +1819,10 @@ ${outline(await read($, tree))}` }
     if (!node) return { result: `No node ${id}.` }
     await commit($, { kind: 'upsert', input: { id, iterations: node.iterations, status: node.status, ...(node.verification ? { verification: node.verification } : {}) } })
     const n = node.iterations!.length
+    if (!passed && (await methodOf($)) !== 'ambitious' && failures(node) >= 3) {
+      await commit($, { kind: 'upsert', input: { id, status: 'blocked', blockedOn: `the user: ${failures(node)} failed attempts (last: ${result.slice(0, 120)})` } })
+      return { result: `${id} blocked after ${failures(node)} failed attempts (harness): stop here and tell the user what failed and what the evidence shows.` }
+    }
     return { result: passed ? `${id} accepted at iteration ${n}: done.` : `${id} iteration ${n} recorded, criterion not met yet${node.acceptance ? ` (${node.acceptance})` : ''}: iterate again.` }
   })
 

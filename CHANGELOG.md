@@ -2,6 +2,15 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.20.0
+
+- **An experimental harness method, beside Felix's.** `/ambiflex method ambitious|harness|both` picks the project's method; `ambitious` (Felix Rieseberg's altitude, depth, range) stays the default, unchanged. The harness is inspired by public guidance attributed to Andrej Karpathy; he did not write or endorse it.
+- Under `harness` (or `both`: Felix for the tracks, the harness to run each node), the plugin enforces three rules:
+  1. **Plan first, then pause.** No node starts until you approve the plan of the current goal: the page's **Approve plan** button or `/ambiflex approve`. A new goal needs a new approval.
+  2. **Checks before work.** A node needs its acceptance criterion or its judge before it starts.
+  3. **Three attempts, then stop.** The third failure blocks the node, with the reason, for your decision.
+- The page shows the method in the header and, until you approve, a band with the plan's size and how many nodes still lack a check.
+
 ## 0.19.2
 
 - **Particles flow down the tree.** On every arc into a node at work, bright particles run from the parent to the child; out of a finished parent, softer green ones run to its children. You see at a glance where the work is going. Off when your system asks for reduced motion.
