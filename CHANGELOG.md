@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.19.2
+
+- **Particles flow down the tree.** On every arc into a node at work, bright particles run from the parent to the child; out of a finished parent, softer green ones run to its children. You see at a glance where the work is going. Off when your system asks for reduced motion.
+
 ## 0.19.1
 
 - **Overhead calibrated on a real A/B run.** The same task ran 3 times without Ambiflex and 3 times with it (Sonnet). With the plugin loaded but the tree barely used, the difference was within the noise (+5 %, runs vary ±8 %). With a CLAUDE.md asking for the tree, Ambiflex added **+29 %** to the task's own cost. The estimate's middle value was too high and now uses the measured round-trip factor.
