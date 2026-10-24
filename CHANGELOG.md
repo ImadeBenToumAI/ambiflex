@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.24.0
+
+- Talk to Claude from a node: double-click it (or **Message Claude** in its sheet) for a composer like the chat box. Attach files (click, paste or drop; stored in the page's asset store, small text files inline), dictate (the browser's speech recognition when the view allows it, macOS dictation otherwise), send with ⌘/Ctrl+Enter.
+- The message reaches the project's session with the node's id, state and proof; the session says it received it and sends its final answer back to the page, shown in the node's thread with its steps (sent, queued, got, working, answered).
+- Line icons on the status icons' grid and stroke. New and republished pages declare the asset store (`/ambiflex page`).
+
 ## 0.23.2
 
 - Fix: background tasks never showed. The host returns a background launch as `{ result: { backgroundTaskId } }`; the id is now read from that field (the text as fallback). Checked end to end with a headless session.

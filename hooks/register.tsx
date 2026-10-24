@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.23.2'
+export const VERSION = '0.24.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -807,6 +807,12 @@ async function noteBackground($: $, ran: unknown, text: string, label: string) {
   if (node) await setLive($, `bg:${id}`, { node, who: 'background task', phase: 'tool', label: what.slice(0, 80), bg: true, startedAt, ...(eta ? { eta } : {}) })
 }
 
+/** The composer's message id and node in a turn's text: "Message about n5 … (msg m1a2b3)". */
+export function chatOf(text: string): { msg: string; node: string } | undefined {
+  const m = /Message about (n\d+)\b[\s\S]{0,400}?\(msg (m[0-9a-z]+)\)/.exec(text)
+  return m ? { node: m[1]!, msg: m[2]! } : undefined
+}
+
 /** Background tasks a notification reports as ended. */
 export function endedTasks(text: string): string[] {
   const out: string[] = []
@@ -1288,9 +1294,9 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   const name = await projectName($)
   const url = await artifactUrl($)
   const known = !!url
-  const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db) and comments that can be sent to Claude. Save the returned URL as {"url": "<url>", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
+  const publishNew = `Load the artifact-capabilities skill, then publish ${PAGE_FILE} with the Artifact tool as a NEW artifact (no url): icon "tree", title "Ambiflex · ${name}", description "Live reasoning tree for ${name}", capabilities: the shared database (db), comments that can be sent to Claude, and the asset store (assets, so files attached in the page reach you). Save the returned URL as {"url": "<url>", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE} (overwrite it), then sync the tree into it (ArtifactData set, collection "tree", doc "current", file_path ".ambiflex/tree.json") and give me the link. The page is private until I share it.`
   const ask = known
-    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, read the live page with the Artifact tool and find its PAGE_VERSION = '…' line: if the live page is a newer version than ${VERSION}, do NOT republish it (another session runs a newer Ambiflex; tell me to /reload-plugins here) and only sync the tree. Otherwise republish ${PAGE_FILE} to that same URL, keeping its capabilities, write {"url": "${url}", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
+    ? `[tree] The interactive Ambiflex page of the project "${name}" is recorded in ${ARTIFACT_FILE}: ${url}. First check it is this project's page: read its doc tree/current (ArtifactData get) and compare its "project" field, or if it has none its goal, with .ambiflex/tree.json here. If it belongs to another project, do not touch that page: ${publishNew} If it is this project's page, read the live page with the Artifact tool and find its PAGE_VERSION = '…' line: if the live page is a newer version than ${VERSION}, do NOT republish it (another session runs a newer Ambiflex; tell me to /reload-plugins here) and only sync the tree. Otherwise republish ${PAGE_FILE} to that same URL, keeping its capabilities and adding the asset store (assets) if it lacks it (pass the full set: db, comments sendable to Claude, assets), write {"url": "${url}", "project": "${name}", "pageVersion": "${VERSION}"} in ${ARTIFACT_FILE}, then sync the tree into it (method item 9) and give me the link.`
     : `[tree] Publish the interactive Ambiflex page for the project "${name}". ${publishNew}`
   return { ask, text: known ? `page.html regenerated (${VERSION}); Claude publishes it now${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : `page.html generated (${VERSION}); Claude publishes it now.` }
 }
@@ -1868,6 +1874,10 @@ ${outline(await read($, tree))}` }
     // A turn started by a page action (a comment or a queued click): say so on the page at once.
     const asked = /\[tree\] ([^\n]{1,240})/.exec(e.text)
     if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString() }
+    // A message from the page's composer: say it was received, then (turn.complete) send the answer back.
+    const chat = chatOf(e.text)
+    ;(await ctx($) as { chat?: { msg: string; node: string } }).chat = chat
+    if (chat) await pushDoc($, 'reply', { ...chat, state: 'received', at: new Date(await $.clock.now()).toISOString() }).catch(() => undefined)
     await pushLive($, true).catch(() => undefined)
     await startTurnCost($, e.text).catch(() => undefined)
     if (e.text.startsWith('[tree] Auto mode')) {
@@ -1903,6 +1913,8 @@ ${outline(await read($, tree))}` }
       return ran
     }
     await endTurnCost($).catch(() => undefined)
+    { const c = await ctx($) as { chat?: { msg: string; node: string } }
+      if (c.chat) { const chat = c.chat; c.chat = undefined; await pushDoc($, 'reply', { ...chat, state: 'answered', answer: String(e.answer ?? '').slice(0, 6000), at: new Date(await $.clock.now()).toISOString() }).catch(() => undefined) } }
     const q = (await ctx($)) as { queued?: string }
     if (q.queued) { const text = q.queued; q.queued = undefined; await handOver($, text).catch(() => undefined); return ran }
     await trackCost($).catch(() => undefined)

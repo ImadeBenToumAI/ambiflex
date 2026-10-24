@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, backgroundId, endedTasks, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
+import { VERSION, WHATS_NEW, backgroundId, chatOf, endedTasks, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -649,4 +649,9 @@ test('background tasks: the id as the host returns it, and when the result shoul
   expect(expectedEnd('#n5 eval, ETA 14:30', t0)).toBe('2026-10-24T14:30:00.000Z')
   expect(expectedEnd('#n5 nightly, ETA 08:00', t0)).toBe('2026-10-25T08:00:00.000Z')
   expect(expectedEnd('#n5 watch the run', t0)).toBeUndefined()
+})
+
+test('composer: the message id and node in the turn the page started', () => {
+  expect(chatOf('[Artifact comment sent to Claude] [tree] Message about n12 "Signed webhooks" (exploring) (msg mk3x9a):\nrerun it')).toEqual({ node: 'n12', msg: 'mk3x9a' })
+  expect(chatOf('[tree] Go deeper on n12')).toBeUndefined()
 })
