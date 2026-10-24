@@ -9,6 +9,7 @@ import { PAGE_HTML } from './page'
 import { HUB_HTML } from './hubpage'
 import { HUB_FILE, HUB_TITLE, hubFromJson, hubFromListing, navItems, projectCard, slug as hubSlug, type Card } from './hub'
 import { SERVER_PY, localShim, parseActions } from './local'
+import { INFRA_FILE, PACKS, SCAN_HINT, cleanSvg, iconKeys, infraAlerts, mergeInfra, parseInfra, type Infra, type Provider } from './infra'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
@@ -87,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.25.0'
-export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
+export const VERSION = '0.26.0'
+export const WHATS_NEW = 'Archi tab: ask Claude to map this project\'s infrastructure; it scans GCP, AWS and Azure read-only and the page draws resources, flows and risks with the providers\' official icons (IPs and ids masked until Unmask). High risks become hub alerts.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -810,6 +811,7 @@ async function pushHub($: $, force = false) {
   if (!t.goal && !t.nodes.length) return
   const name = await projectName($)
   const card = projectCard(t, await read($, live), { name, url: await artifactUrl($), session: await sessionRef($), now: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, budgetUsd: options.budgetUsd })
+  card.alerts.push(...infraAlerts(await readInfra($)))
   await setDocIn($, url, 'projects', hubSlug(name), card as unknown as Record<string, unknown>)
   if (!force && now - (c.navAt ?? 0) < NAV_EVERY) return
   c.navAt = now
@@ -838,6 +840,47 @@ async function hubRequest($: $, arg: string): Promise<{ ask?: string; text: stri
     ? `[tree] The account's Ambiflex hub is ${url}. Read the live page with the Artifact tool and find its HUB_VERSION = '…' line: if it is older than ${VERSION}, republish ${file} to that same URL, keeping its capabilities; otherwise leave it. Give me the link.`
     : `[tree] Publish the account's Ambiflex hub. First list my artifacts (Artifact action list) and look for one titled "${HUB_TITLE}": if one exists, use it (republish ${file} to it if its HUB_VERSION is older than ${VERSION}), ${save}. If none exists, load the artifact-capabilities skill and publish ${file} with the Artifact tool as a NEW artifact: icon "dashboard", title "${HUB_TITLE}", description "Every Ambiflex project of this account: progress, sessions and alerts", capabilities: the shared database (db); ${save}. Give me the link. The page is private until I share it.`
   return { ask, text: url ? `Hub: ${url}. Claude checks its version now.` : 'No hub found yet: Claude publishes it now.' }
+}
+
+async function readInfra($: $): Promise<Infra> {
+  return parseInfra((await $.fs.read(`${await rootOf($)}${INFRA_FILE}`).catch(() => '')) as string)
+}
+
+/**
+ * The official icons a map uses, as data URIs. Each provider's pack is downloaded once per machine, from the provider,
+ * into ~/.claude/ambiflex-runtime/icons/ (never into the project); a pack that cannot be fetched leaves its kinds to the
+ * page's generic glyphs.
+ */
+export async function infraIcons($: $, infra: Infra): Promise<Record<string, string>> {
+  const home = await homeDir($)
+  const keys = iconKeys(infra)
+  if (!home || !keys.length) return {}
+  const dir = `${home}/.claude/ambiflex-runtime/icons/`
+  await $.process.run(['mkdir', '-p', '-m', '700', dir]).catch(() => undefined)
+  const out: Record<string, string> = {}
+  for (const p of [...new Set(keys.map(k => k.split(':')[0] as Provider))]) {
+    const pack = PACKS[p], zip = `${dir}${pack.file}`
+    const have = await $.process.run(['test', '-s', zip]).catch(() => undefined)
+    if (!have || have.exitCode !== 0) {
+      const got = await $.process.run(['curl', '-fsSL', '-m', '240', '-o', `${zip}.part`, pack.url], { timeoutMs: 250e3 }).catch(() => undefined)
+      if (!got || got.exitCode !== 0) continue
+      await $.process.run(['mv', `${zip}.part`, zip]).catch(() => undefined)
+    }
+    for (const k of keys.filter(x => x.startsWith(`${p}:`))) {
+      const r = await $.process.run(['unzip', '-p', zip, pack.icons[k.split(':')[1]!]!], { timeoutMs: 20e3 }).catch(() => undefined)
+      const svg = r && r.exitCode === 0 ? cleanSvg(r.stdout) : undefined
+      if (svg) out[k] = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+    }
+  }
+  return out
+}
+
+/** Sends the map and its icons to the page (doc "infra/current"). */
+async function pushInfra($: $) {
+  const infra = await readInfra($)
+  if (!infra.resources.length) return
+  const icons = await infraIcons($, infra)
+  await pushDoc($, 'infra', { ...infra, icons, terms: Object.fromEntries(Object.entries(PACKS).map(([k, v]) => [k, v.terms])) } as unknown as Record<string, unknown>, true)
 }
 
 const docVersions: Record<string, number | undefined> = {}
@@ -1197,6 +1240,19 @@ async function registerTools($: $) {
       type: 'object',
       properties: { review: { type: 'string', description: 'Review id (r1…); omitted, the latest.' }, ids: { type: 'array', items: { type: 'string' }, description: 'Proposal ids (p1…), or ["all"].' }, accept: { type: 'boolean' } },
       required: ['ids', 'accept'],
+    }],
+    ['tree_infra', 'Records the project\'s cloud infrastructure (GCP, AWS, Azure) for the page\'s Archi tab: resources, flows between them, risks, IAM and secrets (names only). Merges by id; replace: true rewrites the map; called with nothing, returns how to scan.', {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', description: 'What was scanned (projects, accounts, subscriptions).' },
+        resources: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, provider: { type: 'string', enum: ['gcp', 'aws', 'azure', 'client', 'external'] }, type: { type: 'string', description: 'cloud_run, lambda, cloud_sql, s3, pubsub, vpc, key_vault…' }, name: { type: 'string' }, region: { type: 'string' }, network: { type: 'string' }, subnet: { type: 'string' }, cidr: { type: 'string' }, ip: { type: 'string' }, public: { type: 'boolean' }, node: { type: 'string', description: 'The tree node it serves.' }, ref: { type: 'string', description: 'Provider id / path (masked on the page).' } }, required: ['id', 'provider', 'type'] } },
+        flows: { type: 'array', items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, proto: { type: 'string' }, port: { type: 'string' }, label: { type: 'string' }, encrypted: { type: 'boolean' } }, required: ['from', 'to'] } },
+        risks: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, level: { type: 'string', enum: ['high', 'medium', 'low'] }, title: { type: 'string' }, why: { type: 'string' }, fix: { type: 'string' }, resource: { type: 'string' } }, required: ['level', 'title'] } },
+        iam: { type: 'array', items: { type: 'object', properties: { who: { type: 'string' }, role: { type: 'string' }, on: { type: 'string' } }, required: ['who', 'role'] } },
+        secrets: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, where: { type: 'string' }, rotated: { type: 'string' } }, required: ['name'] } },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Resource or risk ids to drop.' },
+        replace: { type: 'boolean' },
+      },
     }],
     ['tree_page_update', 'Republishes this project\'s interactive page with this plugin version (what the page\'s "Update this page" button asks): returns the steps to follow.', { type: 'object' }],
     ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
@@ -1962,6 +2018,7 @@ export const register: Register = (on, opts) => {
     await refreshGit($)
     await pushSkills($).catch(() => undefined)
     await pushBrain($, true).catch(() => undefined)
+    pushInfra($).catch(() => undefined)
     installPing($).catch(() => undefined)
     await whatsNew($).catch(() => undefined)
     const w = (await ctx($)).warning
@@ -2241,6 +2298,16 @@ ${outline(await read($, tree))}` }
       lines.push(`${n.id} ${ok ? 'passes' : exit ? `FAILS (exit ${exit[1]})` : 'not run (refused or no output)'}: ${n.verifyCmd}`)
     }
     return { result: lines.join('\n') }
+  })
+
+  on('tool.call', { tool: 'mcp__ambiflex__tree_infra' }, async ($, e) => {
+    const patch = e as unknown as Partial<Infra> & { remove?: string[]; replace?: boolean }
+    if (!patch.resources && !patch.flows && !patch.risks && !patch.remove && !patch.iam && !patch.secrets) return { result: SCAN_HINT }
+    const next = mergeInfra(await readInfra($), patch, await nowIso($))
+    await $.fs.write(`${await rootOf($)}${INFRA_FILE}`, JSON.stringify(next, null, 1))
+    await pushInfra($).catch(() => undefined)
+    const high = next.risks.filter(r => r.level === 'high').length
+    return { result: `Infra map: ${next.resources.length} resources, ${next.flows.length} flows, ${next.risks.length} risks (${high} high). The page's Archi tab shows it${high ? '; high risks are alerts on the hub' : ''}.` }
   })
 
   on('tool.call', { tool: 'mcp__ambiflex__tree_page_update' }, async ($) => {

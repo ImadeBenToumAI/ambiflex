@@ -724,3 +724,15 @@ test('security: the local page server starts from an argument vector, outside th
   expect([...disk.keys()].some(k => k.startsWith(`${root}/.ambiflex/`) && /local\.json|serve\.py|actions\.jsonl|local\.html/.test(k))).toBe(false)
   expect(String(r.text ?? r)).toContain('http://127.0.0.1:')
 })
+
+test('tree_infra: with nothing, how to scan; with resources, the map on disk and a summary', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  bottoms(on, [], files)
+  const hint = await $.tool.call({ tool: 'mcp__ambiflex__tree_infra' } as never)
+  expect(String((hint as { result?: unknown }).result)).toContain('read-only')
+  const r = await $.tool.call({ tool: 'mcp__ambiflex__tree_infra', resources: [{ id: 'api', provider: 'gcp', type: 'cloud_run', name: 'api' }, { id: 'vm', provider: 'gcp', type: 'compute_engine', name: 'batch', public: true }], flows: [{ from: 'api', to: 'vm', proto: 'TCP', port: '22' }], risks: [{ id: 'k1', level: 'high', title: 'SSH open', why: 'port 22 to the internet', resource: 'vm' }] } as never)
+  expect(String((r as { result?: unknown }).result)).toContain('2 resources, 1 flows, 1 risks (1 high)')
+  const disk = [...files].find(([p]) => p.endsWith('.ambiflex/infra.json'))?.[1] ?? ''
+  expect(JSON.parse(disk).resources.length).toBe(2)
+})

@@ -7,7 +7,7 @@ import { blockers, eta, progress, proofScore } from './tree'
 export const HUB_TITLE = 'Ambiflex Hub'
 export const HUB_FILE = '.claude/ambiflex-hub.json'
 
-export type Alert = { key: string; kind: 'blocked' | 'failing' | 'silent' | 'budget'; node?: string; title: string; why: string; level: 'red' | 'amber' }
+export type Alert = { key: string; kind: 'blocked' | 'failing' | 'silent' | 'budget' | 'infra'; node?: string; title: string; why: string; level: 'red' | 'amber' }
 
 export type Card = {
   name: string

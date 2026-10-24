@@ -2,6 +2,14 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.26.0
+
+- **Archi tab** after Tree: the project's cloud infrastructure (GCP, AWS, Azure) in three levels: ① an animated overview (one band per cloud, clients and third parties, protocol and port on each flow, risky flows in red), ② network & flows (VPC/VNet, subnets, CIDR, IPs, exposure), ③ security (risks with fixes, IAM, secret names).
+- **Official icons**: each provider's pack is downloaded from the provider at run time into `~/.claude/ambiflex-runtime/icons/`, never bundled; only the icons a map uses are embedded, cleaned, in the private page.
+- **Masking**: IPs, CIDRs, networks and provider ids stay masked until Unmask.
+- **`tree_infra` tool**: Claude records resources, flows, risks, IAM and secret names from read-only gcloud, aws and az scans; called empty it returns the scan commands.
+- High and medium infrastructure risks become hub alerts; a resource opens the tree node it serves.
+
 ## 0.25.0
 
 Security and privacy release.
