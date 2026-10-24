@@ -6,6 +6,8 @@ import { emptyLedger, estTokens, noteCall, noteCompact, noteRequest, overhead, o
 import { PING_URL, isoWeek, weekUrl } from './ping'
 import { LOG_FILE, eventsFromSnapshot, parseLog, replay, serialize } from './log'
 import { PAGE_HTML } from './page'
+import { HUB_HTML } from './hubpage'
+import { HUB_FILE, HUB_TITLE, hubFromJson, hubFromListing, navItems, projectCard, slug as hubSlug, type Card } from './hub'
 import { SERVER_PY, localShim, parseActions } from './local'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
@@ -85,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.22.1'
+export const VERSION = '0.23.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -621,6 +623,115 @@ async function pushLive($: $, force = false) {
   } finally {
     c.pushing = false
   }
+  await pushHub($).catch(() => undefined)
+}
+
+// ---------- Hub: one page for the account, every project's card and alerts ----------
+
+const HUB_EVERY = 60e3, NAV_EVERY = 120e3
+
+/** The hub's URL: this machine's record, else the project's (committed, so cloud sessions find it), else the account's pages. */
+async function hubUrl($: $): Promise<string | undefined> {
+  const c = await ctx($) as { hubUrl?: string; hubLooked?: boolean }
+  if (c.hubUrl) return c.hubUrl
+  const home = await homeDir($)
+  const found = (home ? hubFromJson(await $.fs.read(`${home}/${HUB_FILE}`).catch(() => '') as string) : undefined)
+    ?? hubFromJson(await $.fs.read(`${await rootOf($)}.ambiflex/hub.json`).catch(() => '') as string)
+  if (found) return (c.hubUrl = found)
+  if (c.hubLooked) return undefined
+  c.hubLooked = true
+  const listing = await $.tool.call({ tool: 'Artifact', action: 'list', limit: 200 } as never).catch(() => undefined)
+  const url = listing ? hubFromListing(typeof listing === 'string' ? listing : JSON.stringify(listing).replace(/\\n/g, '\n')) : undefined
+  if (url) await saveHub($, url)
+  return url
+}
+
+async function saveHub($: $, url: string) {
+  ;(await ctx($) as { hubUrl?: string }).hubUrl = url
+  const home = await homeDir($)
+  if (home) await $.fs.write(`${home}/${HUB_FILE}`, `${JSON.stringify({ url })}\n`).catch(() => undefined)
+  if (!(await ctx($)).blocked) await $.fs.write(`${await rootOf($)}.ambiflex/hub.json`, `${JSON.stringify({ url })}\n`).catch(() => undefined)
+}
+
+/** Writes one doc into another page's store (the hub), pinned to the version last seen there. */
+async function setDocIn($: $, url: string, collection: string, docId: string, data: Record<string, unknown>): Promise<boolean> {
+  const k = `${url}#${collection}/${docId}`
+  const set = () => $.tool.call({ tool: 'ArtifactData', action: 'set', url, collection, doc_id: docId, data, ...(docVersions[k] ? { if_version: docVersions[k] } : {}) } as never)
+  let r = await set().catch(() => undefined)
+  if (failed(r)) {
+    const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url, collection, doc_id: docId } as never).catch(() => undefined)
+    docVersions[k] = versionIn(got)
+    r = await set().catch(() => undefined)
+    if (failed(r)) return false
+  }
+  docVersions[k] = versionIn(r) ?? docVersions[k]
+  return true
+}
+
+/** The docs of one collection of a page's store, as an ArtifactData listing returns them. */
+async function listDocs($: $, url: string, collection: string): Promise<{ id: string; data: Record<string, unknown> }[]> {
+  const r = await $.tool.call({ tool: 'ArtifactData', action: 'list', url, collection, query: { limit: 200 } } as never).catch(() => undefined)
+  const text = typeof r === 'string' ? r : JSON.stringify((r as { result?: unknown })?.result ?? r ?? '')
+  return parseDocs(text)
+}
+
+/** Doc lines ({"id":…,"data":{…}}) out of a listing's text. */
+export function parseDocs(text: string): { id: string; data: Record<string, unknown> }[] {
+  const out: { id: string; data: Record<string, unknown> }[] = []
+  const body = text.includes('\\n') && !text.includes('\n{') ? text.replace(/\\n/g, '\n').replace(/\\"/g, '"') : text
+  for (const line of body.split('\n')) {
+    const i = line.indexOf('{"id"')
+    if (i < 0) continue
+    try { const d = JSON.parse(line.slice(i)) as { id?: string; data?: Record<string, unknown> }; if (d.id && d.data) out.push({ id: d.id, data: d.data }) } catch { /* not a doc line */ }
+  }
+  return out
+}
+
+/** Where to resume this project's work: a cloud session's link, or this machine and folder. */
+async function sessionRef($: $): Promise<Card['session']> {
+  const remote = await $.env.get('CLAUDE_CODE_REMOTE_SESSION_ID').catch(() => undefined)
+  if (remote) return { kind: 'cloud', url: `https://claude.ai/code/${remote.replace(/^cse_/, 'session_')}`, label: 'Cloud session' }
+  const host = await $.env.get('HOSTNAME').catch(() => undefined) ?? await $.env.get('COMPUTERNAME').catch(() => undefined)
+  return { kind: 'local', label: `${host || 'local machine'} · ${(await rootOf($)).replace(/\/$/, '')}` }
+}
+
+/** This project's card into the hub; every two minutes, the hub's project list back into this project's page. */
+async function pushHub($: $, force = false) {
+  const c = await ctx($) as { blocked?: boolean; hubAt?: number; navAt?: number; busy?: boolean }
+  if (c.blocked) return
+  const now = await $.clock.now()
+  if (!force && now - (c.hubAt ?? 0) < HUB_EVERY) return
+  c.hubAt = now
+  const url = await hubUrl($)
+  if (!url) {
+    const h = c as { hubHinted?: boolean }
+    if (!h.hubHinted && await artifactUrl($)) { h.hubHinted = true; $.ui.toast('One page for all your projects and their alerts: /ambiflex hub') }
+    return
+  }
+  const t = await read($, tree)
+  if (!t.goal && !t.nodes.length) return
+  const name = await projectName($)
+  const card = projectCard(t, await read($, live), { name, url: await artifactUrl($), session: await sessionRef($), now: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, budgetUsd: options.budgetUsd })
+  await setDocIn($, url, 'projects', hubSlug(name), card as unknown as Record<string, unknown>)
+  if (!force && now - (c.navAt ?? 0) < NAV_EVERY) return
+  c.navAt = now
+  const cards = (await listDocs($, url, 'projects')).map(d => d.data as unknown as Card).filter(x => x?.name)
+  const acked = new Set((await listDocs($, url, 'acks')).map(d => d.id))
+  const seen = (await listDocs($, url, 'presence')).map(d => String(d.data.at ?? '')).sort().pop()
+  await pushDoc($, 'nav', { hub: url, at: new Date(now).toISOString(), hubSeenAt: seen ?? '', projects: navItems(cards, acked, new Date(now).toISOString()), current: name })
+}
+
+/** /ambiflex hub: finds the account's hub, or has Claude publish it; writes its page next to the tree. */
+async function hubRequest($: $, arg: string): Promise<{ ask?: string; text: string }> {
+  if (/^https:\/\/claude\.ai\//.test(arg)) { await saveHub($, arg); await pushHub($, true).catch(() => undefined); return { text: `Hub recorded: ${arg}. This project's card is in it now.` } }
+  const file = `${await rootOf($)}.ambiflex/hub.html`
+  await $.fs.write(file, HUB_HTML.replace('__AMBIFLEX_VERSION__', VERSION))
+  const url = await hubUrl($)
+  const save = `then run /ambiflex hub <url> with its URL (or write {"url": "<url>"} to ~/${HUB_FILE} and to .ambiflex/hub.json) so every session writes its project's card there`
+  const ask = url
+    ? `[tree] The account's Ambiflex hub is ${url}. Read the live page with the Artifact tool and find its HUB_VERSION = '…' line: if it is older than ${VERSION}, republish ${file} to that same URL, keeping its capabilities; otherwise leave it. Give me the link.`
+    : `[tree] Publish the account's Ambiflex hub. First list my artifacts (Artifact action list) and look for one titled "${HUB_TITLE}": if one exists, use it (republish ${file} to it if its HUB_VERSION is older than ${VERSION}), ${save}. If none exists, load the artifact-capabilities skill and publish ${file} with the Artifact tool as a NEW artifact: icon "dashboard", title "${HUB_TITLE}", description "Every Ambiflex project of this account: progress, sessions and alerts", capabilities: the shared database (db); ${save}. Give me the link. The page is private until I share it.`
+  return { ask, text: url ? `Hub: ${url}. Claude checks its version now.` : 'No hub found yet: Claude publishes it now.' }
 }
 
 const docVersions: Record<string, number | undefined> = {}
@@ -1665,7 +1776,7 @@ export const register: Register = (on, opts) => {
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
-      argumentHint: '[auto [turns] | stop | status | page | local [stop] | update | altitude | doctor]',
+      argumentHint: '[auto [turns] | stop | status | page | hub [url] | local [stop] | update | altitude | doctor]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -1682,6 +1793,7 @@ ${outline(await read($, tree))}` }
     // The ask must start a turn of its own: left in the command's context it would wait for the user's next message,
     // and a command may not submit a prompt while it holds its turn, so it goes out when that turn completes.
     if (verb === 'page') { const r = await pageRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
+    if (verb === 'hub') { const r = await hubRequest($, arg ?? ''); if (r.ask) (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'update') return { text: await selfUpdate($) }
     if (verb === 'doctor') return { text: await doctor($) }
     if (verb === 'local') return { text: await localPage($, arg) }

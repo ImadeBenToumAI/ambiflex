@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.23.0
+
+- **Ambiflex Hub**: one page per account listing every project (progress, proof, ETA, cost, session state, nodes at work) with the alerts that need you (blocked nodes, failing proofs, silent runs, budget): a sound and a note for each new one, a Seen button, links to the project page on the node and to the session. Each session writes its project's card there; `/ambiflex hub [url]` publishes or records the hub, found afterwards from `~/.claude/ambiflex-hub.json`, the project's `.ambiflex/hub.json`, or the account's artifacts.
+- Project pages: a Hub link with the alert count, a project switcher on the project name (`G H`, `G P`), a note when another project raises an alert, `#nX` deep links to a node; they stay quiet while the hub is open.
+
 ## 0.22.1
 
 - Background tasks show live on their node: a shell run in the background or a Monitor is attached to the node its description cites (else the node in hand) and stays live on the page after the turn ends, until its task notification or TaskStop ends it.

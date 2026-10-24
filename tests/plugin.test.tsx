@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, backgroundId, endedTasks, newerVersion, parseCommits } from '../hooks/register'
+import { VERSION, WHATS_NEW, backgroundId, endedTasks, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -633,4 +633,9 @@ test('background tasks: the launch id and the notifications that end them', () =
   expect(backgroundId('nothing here')).toBeUndefined()
   const note = '<task-notification><task-id>b7x2k9</task-id><status>completed</status></task-notification> <task-notification><task-id>m1zz</task-id><status>running</status></task-notification>'
   expect(endedTasks(note)).toEqual(['b7x2k9'])
+})
+
+test('hub: doc lines out of an ArtifactData listing', () => {
+  const text = 'header\n{"id":"stt","data":{"name":"stt","pct":85},"version":3}\n{"id":"pay","data":{"name":"pay"},"version":1}\n=== END ==='
+  expect(parseDocs(text).map(d => d.id)).toEqual(['stt', 'pay'])
 })
