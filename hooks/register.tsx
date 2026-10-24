@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.27.0'
-export const WHATS_NEW = 'Long-task harness: in auto mode a node is done only with the ambiflex-reviewer\'s evidence table (a read-only subagent that opens the sources); each node keeps a handoff a new session resumes from; a node\'s scope refuses writes outside it.'
+export const VERSION = '0.27.1'
+export const WHATS_NEW = 'The node sheet on the page shows the reviewer\'s evidence (claim, source opened, verdict) and where to resume (next action, open questions, checks, files), plus the node\'s write scope.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')

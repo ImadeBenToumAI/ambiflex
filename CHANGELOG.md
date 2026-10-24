@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.27.1
+
+- **Node sheet**: shows the reviewer's evidence (claim, source opened, verdict with a line icon, correction or missing evidence), where to resume (next action, open questions, checks done, files, age) and the node's write scope.
+
 ## 0.27.0
 
 - **Evidence reviewer**: a read-only subagent (`ambiflex:ambiflex-reviewer`, high effort) opens the sources and re-runs the checks, then returns one row per claim: confirmed, incorrect (with the correction) or unresolved (with the missing evidence).
