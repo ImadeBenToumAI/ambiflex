@@ -18,7 +18,7 @@ test('hub: a project card carries progress, live work and the alerts that need t
 })
 
 test('hub: the switcher lists alerts first, acknowledged alerts no longer count, old projects are stopped', () => {
-  const base = { goal: '', session: { kind: 'local', label: 'mac' }, busy: false, bg: 0, auto: { on: false, turns: 0, maxTurns: 40 }, proven: 0, done: 0, total: 0, etaMin: 0, spentUsd: 0, working: [], plugin: '' } as const
+  const base = { goal: '', session: { kind: 'local', label: 'mac' }, busy: false, bg: 0, auto: { on: false, turns: 0, maxTurns: 40 }, proven: 0, done: 0, total: 0, etaMin: 0, spentUsd: 0, working: [], background: [], plugin: '' } as const
   const cards: Card[] = [
     { ...base, name: 'a', pct: 10, at: '2026-10-24T09:58:00.000Z', alerts: [] },
     { ...base, name: 'b', pct: 20, at: '2026-10-24T09:00:00.000Z', alerts: [{ key: 'blocked:n2', kind: 'blocked', title: 'x', why: 'y', level: 'red' }, { key: 'failing:n3', kind: 'failing', title: 'x', why: 'y', level: 'amber' }] },

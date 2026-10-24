@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.23.2
+
+- Fix: background tasks never showed. The host returns a background launch as `{ result: { backgroundTaskId } }`; the id is now read from that field (the text as fallback). Checked end to end with a headless session.
+- Each background task carries its start and when its result should land, read from its description: `(~2h)`, `(45 min)`, `ETA 14:30`. The method asks Claude to write it.
+- Page: a dotted root and a pill per background task under its node (its ETA, or late); a "first result" chip in the header; the times in the working chips. Hub cards list them too.
+- An agent ending on a node no longer clears that node's background tasks.
+
 ## 0.23.1
 
 - New sounds: a synth with a master compressor and room echo (FM bells, brass, plucks, low thumps), louder, in three families you tell apart by ear: alarms (low, rough, repeated), rewards (bells and brass, rising), ticks (short, soft).

@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, backgroundId, endedTasks, newerVersion, parseCommits, parseDocs } from '../hooks/register'
+import { VERSION, WHATS_NEW, backgroundId, endedTasks, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -638,4 +638,15 @@ test('background tasks: the launch id and the notifications that end them', () =
 test('hub: doc lines out of an ArtifactData listing', () => {
   const text = 'header\n{"id":"stt","data":{"name":"stt","pct":85},"version":3}\n{"id":"pay","data":{"name":"pay"},"version":1}\n=== END ==='
   expect(parseDocs(text).map(d => d.id)).toEqual(['stt', 'pay'])
+})
+
+test('background tasks: the id as the host returns it, and when the result should land', () => {
+  expect(backgroundId({ ref: 1, result: { stdout: '', backgroundTaskId: 'bep0fmug1' }, text: 'Command running in background with ID: bep0fmug1.' })).toBe('bep0fmug1')
+  expect(backgroundId({ result: { stdout: '' }, text: 'Command running in background with ID: bx9k2.' })).toBe('bx9k2')
+  const t0 = '2026-10-24T10:00:00.000Z'
+  expect(expectedEnd('#n5 train the student (~2h)', t0)).toBe('2026-10-24T12:00:00.000Z')
+  expect(expectedEnd('#n5 wait for the learner (45 min)', t0)).toBe('2026-10-24T10:45:00.000Z')
+  expect(expectedEnd('#n5 eval, ETA 14:30', t0)).toBe('2026-10-24T14:30:00.000Z')
+  expect(expectedEnd('#n5 nightly, ETA 08:00', t0)).toBe('2026-10-25T08:00:00.000Z')
+  expect(expectedEnd('#n5 watch the run', t0)).toBeUndefined()
 })

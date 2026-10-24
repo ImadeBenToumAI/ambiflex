@@ -111,6 +111,9 @@ export type LiveActivity = {
   at: string
   /** A background task (a shell run in the background, a Monitor): works on after the turn ends, until its notification. */
   bg?: boolean
+  /** When a background task started, and when its result should land (from "(~2h)" or "ETA 14:30" in its description). */
+  startedAt?: string
+  eta?: string
   /** The loop's task list (TaskCreate / TodoWrite), newest last. */
   tasks?: { id: string; subject: string; status: string }[]
 }

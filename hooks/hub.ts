@@ -27,6 +27,8 @@ export type Card = {
   etaMin: number
   spentUsd: number
   working: { id: string; title: string; who: string }[]
+  /** Background tasks: what runs after the turn, since when, and when its result should land. */
+  background: { node: string; label: string; startedAt?: string; eta?: string }[]
   alerts: Alert[]
   plugin: string
 }
@@ -55,6 +57,8 @@ export function projectCard(t: Tree, live: Record<string, LiveActivity>, o: {
     auto: { on: t.auto.on, turns: t.auto.turns, maxTurns: t.auto.maxTurns },
     pct: proof.progressPct, proven: proof.pct, done: p.finished, total: p.total, etaMin: eta(t).critical,
     spentUsd: Math.round(spent * 100) / 100, working: working.slice(0, 6), alerts, plugin: o.plugin,
+    background: Object.values(live).filter(a => a.bg).map(a => ({ node: a.node, label: a.label, ...(a.startedAt ? { startedAt: a.startedAt } : {}), ...(a.eta ? { eta: a.eta } : {}) }))
+      .sort((x, y) => (x.eta ?? '9').localeCompare(y.eta ?? '9')),
   }
 }
 

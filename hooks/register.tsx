@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.23.1'
+export const VERSION = '0.23.2'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -111,7 +111,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 5. Messages starting with [tree] come from the user's panel or page: do what they ask and update the tree.
 6. If a Git branch serves a node, fill in branch.
 7. Tree search: when a node has several competing tracks (children), give each a judge (judge field: the test, benchmark or metric that scores it), then call tree_explore on the parent: the plugin spawns one subagent per track in parallel, each in its own worktree branch, and records the SCORE each reports. Then prune (tree_prune) and merge the winner. Show the budget (agents × minutes) before calling tree_explore; in auto mode go ahead within the plan's budget.
-8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. Work on the node the prompt names (when it names several independent nodes, spawn one subagent per node in one message, each description starting with its #id), verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
+8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. When you start a long task in the background (Bash run_in_background, Monitor), begin its description with the node's #id and end it with its expected duration, e.g. \"#n5 train the student (~2h)\": the page shows when its result should land. Work on the node the prompt names (when it names several independent nodes, spawn one subagent per node in one message, each description starting with its #id), verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
 9. Mobile page: ${ARTIFACT_FILE} holds this project's "Ambiflex" claude.ai page ({url, project}). The plugin syncs the tree to it after every change by itself; you do not sync it by hand. Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 11. Scores: when the judge reads lower-is-better (WER, CER, loss, latency, cost), set direction "lower" and the unit ("%", "ms", "$"): ranking and pruning then keep the smallest. Read the stored node echoed by tree_upsert: it is what the user sees.
@@ -766,9 +766,32 @@ async function pushDoc($: $, collection: string, data: Record<string, unknown>, 
 }
 
 /** The task id a background launch reports ("…with ID: b1x2…", "task_id": "…"). */
-export function backgroundId(result: unknown): string | undefined {
-  const text = typeof result === 'string' ? result : JSON.stringify((result as { result?: unknown })?.result ?? result ?? '')
-  return /\b(?:ID|task[_ ]id|taskId)\b["':=\s]+([A-Za-z0-9_-]{4,})/i.exec(text)?.[1]
+export function backgroundId(ran: unknown): string | undefined {
+  // The host returns { result: { backgroundTaskId }, text: "…running in background with ID: …" }; older shapes carry only text.
+  const r = (ran as { result?: Record<string, unknown> })?.result
+  const field = r && typeof r === 'object' ? r.backgroundTaskId ?? r.taskId ?? r.task_id ?? r.shellId ?? r.monitorId : undefined
+  if (typeof field === 'string' && field) return field
+  const text = typeof ran === 'string' ? ran : `${(ran as { text?: string })?.text ?? ''} ${JSON.stringify(r ?? ran ?? '')}`
+  return /(?:\bID|task[_ ]?id|backgroundTaskId|shell[_ ]?id|monitor[_ ]?id)["':=\s]+([A-Za-z0-9_-]{4,})/i.exec(text)?.[1]
+}
+
+/**
+ * When a background task should end, from its description: "(~45 min)", "~2h", "ETA 14:30", "eta 2026-10-24T15:00".
+ * Returns an ISO time, or undefined when the description gives none.
+ */
+export function expectedEnd(text: string, startedAt: string): string | undefined {
+  const t0 = Date.parse(startedAt)
+  const at = /\beta\s*[:=]?\s*(\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:\.\d+)?Z?)/i.exec(text)
+  if (at) { const d = Date.parse(at[1]!.endsWith('Z') ? at[1]! : `${at[1]}Z`); if (!isNaN(d)) return new Date(d).toISOString() }
+  const hm = /\b(?:eta|until|ends?|by)\s*[:=]?\s*(\d{1,2})[:h](\d\d)\b/i.exec(text)
+  if (hm) { const d = new Date(t0); d.setUTCHours(+hm[1]!, +hm[2]!, 0, 0); if (d.getTime() < t0) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString() }
+  const dur = /(?:~|≈|about |eta |\()\s*(\d+(?:[.,]\d+)?)\s*(s|sec|min|mn|m|h|hr|hours?|d|days?)\b/i.exec(text)
+  if (dur) {
+    const n = parseFloat(dur[1]!.replace(',', '.')), u = dur[2]!.toLowerCase()
+    const ms = u.startsWith('s') ? 1e3 : u.startsWith('h') ? 3600e3 : u.startsWith('d') ? 86400e3 : 60e3
+    return new Date(t0 + n * ms).toISOString()
+  }
+  return undefined
 }
 
 /** A background task, shown working on its node (the one its description cites, else the node in hand) until it ends. */
@@ -777,7 +800,11 @@ async function noteBackground($: $, ran: unknown, text: string, label: string) {
   if (!id) return
   const t = await read($, tree)
   const node = nodeRef(text, t) ?? mainNode(t) ?? current(t)?.id
-  if (node) await setLive($, `bg:${id}`, { node, who: 'background task', phase: 'tool', label: label.slice(0, 80), bg: true })
+  const startedAt = await nowIso($)
+  const eta = expectedEnd(text, startedAt)
+  // The node and the duration are shown apart: the label keeps what the task does.
+  const what = label.replace(/#n\d+\s*/g, '').replace(/\s*[(,;·-]?\s*(?:~|≈|eta\b)[^)]*\)?\s*$/i, '').trim()
+  if (node) await setLive($, `bg:${id}`, { node, who: 'background task', phase: 'tool', label: what.slice(0, 80), bg: true, startedAt, ...(eta ? { eta } : {}) })
 }
 
 /** Background tasks a notification reports as ended. */
@@ -903,7 +930,7 @@ async function storedNode($: $, id: string): Promise<TreeNode | undefined> {
 async function trackAgentEnd($: $, key: string, id: string | undefined) {
   await update($, agents, list => list.filter(one => one !== key))
   if (!id) return
-  const gone = Object.entries(await read($, live)).filter(([k, a]) => k !== 'main' && a.node === id).map(([k]) => k)
+  const gone = Object.entries(await read($, live)).filter(([k, a]) => k !== 'main' && !a.bg && a.node === id).map(([k]) => k)
   for (const k of gone) await setLive($, k, null)
   const after = await read($, tree)
   const node = after.nodes.find(n => n.id === id)
@@ -1871,7 +1898,7 @@ ${outline(await read($, tree))}` }
       if (node) {
         await commit($, { kind: 'upsert', input: { id: node.id, status: 'review', agent: '', ...(score !== undefined ? { score } : {}), ...(result ? { summary: result } : {}) } }).catch(() => undefined)
         await update($, agents, list => list.filter(one => one !== e.agentId && one !== node.agent)).catch(() => undefined)
-        for (const [k, act] of Object.entries(await read($, live))) if (k !== 'main' && act.node === node.id) await setLive($, k, null).catch(() => undefined)
+        for (const [k, act] of Object.entries(await read($, live))) if (k !== 'main' && !act.bg && act.node === node.id) await setLive($, k, null).catch(() => undefined)
       }
       return ran
     }
