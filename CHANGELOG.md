@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.22.1
+
+- Background tasks show live on their node: a shell run in the background or a Monitor is attached to the node its description cites (else the node in hand) and stays live on the page after the turn ends, until its task notification or TaskStop ends it.
+- The page's session chip reads "N background tasks running" instead of "session idle" while they run.
+
 ## 0.22.0
 
 - Auto mode runs independent nodes in parallel: each turn it hands over every node that can start now (up to the new `parallel` setting, default 3), one subagent per node, each in its own worktree branch. Nodes waiting on a parent or an earlier numbered step never start together; `parallel: 1` keeps one node per turn.

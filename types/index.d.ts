@@ -109,6 +109,8 @@ export type LiveActivity = {
   label: string
   branch?: string
   at: string
+  /** A background task (a shell run in the background, a Monitor): works on after the turn ends, until its notification. */
+  bg?: boolean
   /** The loop's task list (TaskCreate / TodoWrite), newest last. */
   tasks?: { id: string; subject: string; status: string }[]
 }

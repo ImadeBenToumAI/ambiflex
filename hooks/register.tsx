@@ -85,7 +85,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.22.0'
+export const VERSION = '0.22.1'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -652,6 +652,32 @@ async function pushDoc($: $, collection: string, data: Record<string, unknown>, 
   }
   c.liveOff = false; c.syncReason = undefined; c.syncOkAt = new Date().toISOString()
   docVersions[`${url}#${collection}`] = versionIn(r) ?? docVersions[`${url}#${collection}`]
+}
+
+/** The task id a background launch reports ("…with ID: b1x2…", "task_id": "…"). */
+export function backgroundId(result: unknown): string | undefined {
+  const text = typeof result === 'string' ? result : JSON.stringify((result as { result?: unknown })?.result ?? result ?? '')
+  return /\b(?:ID|task[_ ]id|taskId)\b["':=\s]+([A-Za-z0-9_-]{4,})/i.exec(text)?.[1]
+}
+
+/** A background task, shown working on its node (the one its description cites, else the node in hand) until it ends. */
+async function noteBackground($: $, ran: unknown, text: string, label: string) {
+  const id = backgroundId(ran)
+  if (!id) return
+  const t = await read($, tree)
+  const node = nodeRef(text, t) ?? mainNode(t) ?? current(t)?.id
+  if (node) await setLive($, `bg:${id}`, { node, who: 'background task', phase: 'tool', label: label.slice(0, 80), bg: true })
+}
+
+/** Background tasks a notification reports as ended. */
+export function endedTasks(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(m[1]!)?.[1]
+    const status = /<status>\s*([^<\s]+)\s*<\/status>/.exec(m[1]!)?.[1] ?? ''
+    if (id && /complet|fail|kill|stop|error|cancel|done|exit/i.test(status)) out.push(id)
+  }
+  return out
 }
 
 /** The node the main loop works on: the latest exploring node no subagent holds. */
@@ -1699,6 +1725,7 @@ ${outline(await read($, tree))}` }
     await registerTools($).catch(() => undefined)
     if (e.agentId) return next(e)
     ;(await ctx($)).busy = true
+    for (const id of endedTasks(e.text)) await setLive($, `bg:${id}`, null).catch(() => undefined)
     // A turn started by a page action (a comment or a queued click): say so on the page at once.
     const asked = /\[tree\] ([^\n]{1,240})/.exec(e.text)
     if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString() }
@@ -1999,14 +2026,30 @@ ${outline(await read($, tree))}` }
 
   // Refresh the Git view after a git command.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const bgRun = !!(e as { run_in_background?: boolean }).run_in_background
     const nudge = [await untracked($, String(e.command ?? ''), !!(e as { run_in_background?: boolean }).run_in_background).catch(() => undefined), await silentRunsNote($).catch(() => undefined)].filter(Boolean).join(' ') || undefined
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshGit($).catch(() => undefined)
+    if (bgRun) await noteBackground($, ran, `${(e as { description?: string }).description ?? ''} ${e.command}`, `Bash: ${(e as { description?: string }).description || String(e.command).slice(0, 60)}`).catch(() => undefined)
     if (nudge) {
       $.ui.toast(nudge)
       const r = ran as { result?: unknown }
       if (r && typeof r.result === 'string') return { ...r, result: `${r.result}\n\n[Ambiflex] ${nudge}` } as typeof ran
     }
+    return ran
+  })
+
+  // A Monitor works in the background like a shell run; TaskStop ends either.
+  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
+    const ran = await next(e)
+    const d = String((e as { description?: string }).description ?? '')
+    await noteBackground($, ran, `${d} ${String((e as { command?: string }).command ?? '')}`, `Monitor: ${d || 'watching'}`).catch(() => undefined)
+    return ran
+  })
+  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
+    const ran = await next(e)
+    const id = String((e as { task_id?: string; shell_id?: string }).task_id ?? (e as { shell_id?: string }).shell_id ?? '')
+    if (id) await setLive($, `bg:${id}`, null).catch(() => undefined)
     return ran
   })
 

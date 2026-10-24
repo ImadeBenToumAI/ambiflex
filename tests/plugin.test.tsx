@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, newerVersion, parseCommits } from '../hooks/register'
+import { VERSION, WHATS_NEW, backgroundId, endedTasks, newerVersion, parseCommits } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -625,4 +625,12 @@ test('a repository with several project trees: the session is attached to one wi
   expect(disk.get('/mono/stt/.ambiflex/log.jsonl')).toContain('Decode the corpus')
   expect(disk.get('/mono/pay/.ambiflex/log.jsonl')).not.toContain('Decode the corpus')
   expect([...disk.keys()].some(k => k.startsWith('/mono/.ambiflex/'))).toBe(false)
+})
+
+test('background tasks: the launch id and the notifications that end them', () => {
+  expect(backgroundId({ result: 'Command running in background with ID: b7x2k9. Output is being written to /tmp/x' })).toBe('b7x2k9')
+  expect(backgroundId('{"task_id":"mon_42ab"}')).toBe('mon_42ab')
+  expect(backgroundId('nothing here')).toBeUndefined()
+  const note = '<task-notification><task-id>b7x2k9</task-id><status>completed</status></task-notification> <task-notification><task-id>m1zz</task-id><status>running</status></task-notification>'
+  expect(endedTasks(note)).toEqual(['b7x2k9'])
 })
