@@ -13,14 +13,17 @@ Ambiflex is a Claude Code plugin (the function-hooks API, early access) that tur
 - Hooks: `session.start`, `command.run`, `prompt.submit` (wake word), `prompt.compose` (one constant method section), `turn.start`, `turn.complete`, `tool.call` on its own tools, `Agent` and `Bash`, `ui.render` on `Pane` and `CommandOutput`.
 - Settings (`userConfig`): `wakeWord`, `budgetUsd`, `alertPct`, `rateLimitAlertPct`, `hourlyRateUsd`.
 
-## Security
+## Security and privacy
 
-- **No network.** The plugin never calls `$.http`; it reads and writes files under the project's `.ambiflex/` folder and runs `git` (and `gh` when present) through `$.process.run`.
-- **No tree content in the system prompt.** The `prompt.compose` section is a constant method text; the tree reaches the model only through `tree_get`, as data, with long fields clipped. A test asserts that a node titled "IGNORE ALL PREVIOUS INSTRUCTIONS" never appears in the system sections.
+- **No network by default.** The plugin's only request of its own is opt-in adoption counting (`installPing`, off by default): an empty download from this repository's GitHub release. Project pages and the account hub are private claude.ai pages the user publishes or joins explicitly. Details: [PRIVACY.md](../PRIVACY.md).
+- **No shell.** Every command runs from an argument vector (`git`, `gh`, `python3` for the local page).
+- **No instruction from repository content.** The local page's button queue lives in `~/.claude/ambiflex-runtime/`, each entry carries that page's key, and the session reads it only while it runs that page; a tracked `.ambiflex/actions.jsonl` is ignored.
+- **No raw arguments in activity labels.** Labels hold the tool name and the task's description; credential-like text is masked before anything is stored or synced.
+- **No tree content in the system prompt.** The `prompt.compose` section is a constant method text; the tree reaches the model only through `tree_get`, as data, with long fields clipped.
 - **Nothing is done without proof.** A node set to `done` without a `verification` is kept at `needs review`; only the user can set `validated`.
-- **Auto mode runs under the user's permission mode** and stops on any interrupted or errored turn, on the turn budget, on the money budget, or on `/ambiflex stop`.
-- **Subagents work in worktrees** under `.ambiflex/worktrees/<id>` (git-ignored), never on the main checkout; merging a branch is proposed, never done by the plugin.
-- Data stays local: `.ambiflex/log.jsonl` (append-only, `merge=union`) and `.ambiflex/tree.json` (derived snapshot).
+- **Auto mode** stops on any interrupted or errored turn, on the turn budget, on the money budget, or on `/ambiflex stop`.
+- **Subagents work in worktrees** under `.ambiflex/worktrees/<id>` (git-ignored); merging a branch is proposed, never done by the plugin.
+- **`/ambiflex backfill`** reads the user's local Claude Code session files on explicit request to rebuild usage and skill history; it is a candidate for removal from a Directory build (policy section 1.G) and can be split out on request.
 
 ## Tests and checks
 

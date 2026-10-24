@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.24.4",
+  "version": "0.25.0",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -81,9 +81,15 @@
     },
     "installPing": {
       "type": "boolean",
-      "description": "Count this install, once per machine: one anonymous download of an empty file from the plugin's GitHub release, nothing else sent (no account, project or content). Off, or AMBIFLEX_NO_PING=1, never sends it.",
-      "default": true,
-      "title": "Anonymous install count"
+      "description": "Opt-in adoption counting (off by default). When on, the plugin downloads two empty files from the public GitHub release \"install-ping\": one the first time it runs under your home folder, one per ISO week while you use it. GitHub counts the downloads; no account, project, path or identifier is sent, but GitHub sees the request (IP address, time). The totals are estimates, not unique machines. Also off with AMBIFLEX_NO_PING=1, DO_NOT_TRACK=1, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 or in cloud sessions.",
+      "default": false,
+      "title": "Adoption counting (install and weekly, opt-in)"
+    },
+    "hubShowMachine": {
+      "type": "boolean",
+      "default": false,
+      "title": "Show the machine name on the hub",
+      "description": "Off: a local session appears on the account hub as \"local session\". On: its machine name is added. The project's folder path is never sent."
     }
   }
 }

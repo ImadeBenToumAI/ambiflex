@@ -2,6 +2,19 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.25.0 — security and privacy release
+
+Acts on the security and privacy review of 24 October 2026 (version 0.24.4).
+
+- **F1:** the local page server starts from an argument vector, never through a shell; a folder name is data, never a command.
+- **F2:** the local page's key, server and button queue live in `~/.claude/ambiflex-runtime/<project id>/` (user-only), never in the repository. Each queued action carries the page's key, and the session reads the queue only while it runs its own local page. A tracked `.ambiflex/actions.jsonl` is ignored.
+- **F3:** `.ambiflex/.gitignore` only ever grows; creating a worktree no longer replaces it.
+- **F4:** only projects you join (`/ambiflex hub join`) report to the account hub and get the project switcher; `/ambiflex hub leave` removes the card. The folder path is never sent, and the machine name only with `hubShowMachine`. **After updating, run `/ambiflex hub join` in each project you want on the hub.**
+- **F5:** activity labels hold the tool name and the task's description, a file's name or a URL's host; credential-like text is masked before anything is stored or synced.
+- **F6:** new `PRIVACY.md`; `SECURITY.md`, the README, the submission notes and `THIRD_PARTY_NOTICES.md` describe what actually leaves the machine.
+- **F7:** adoption counting is **off by default** (opt-in `installPing`). Only a successful response counts, and an atomic lock stops two sessions from counting twice. The totals are estimates.
+- Also: review numbers are rendered as text; the local server checks the Host header and sends no-referrer, nosniff and DENY headers; keys come from the secure random generator; "Git could not run" is told apart from "No Git repository"; an editor's or app's own storage folder gets no `.ambiflex/`.
+
 ## 0.24.4
 
 - Clicks reach the project's own session: each session claims its page's watch at its first turn end and every 30 minutes; `/ambiflex doctor` says whether it listens.

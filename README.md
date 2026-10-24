@@ -95,13 +95,9 @@ In this repository, `.claude/settings.json` enables the plugin for every session
 - Auto mode submits prompts in your session under **your** permission mode. Set the permission mode you are comfortable with before starting it.
 - Auto mode stops on any interrupted or errored turn.
 
-## Privacy: the install count and weekly actives
+## Privacy
 
-To count installs, Ambiflex downloads one tiny file (one byte) from its GitHub release (`install-ping/installed.txt`) **once per machine**, at the first session. To count how many machines use it each week, it downloads that week's file (`install-ping/active-2026-W43.txt`, for example) **once per machine per ISO week**, at the first session of the week. GitHub only keeps a download total per file. Nothing is sent: no account, no project, no content, no identifier, no session count. The request reaches GitHub like any download, so GitHub sees the IP address, as it does for a clone.
-
-- Neither is sent in cloud sessions (`CLAUDE_CODE_REMOTE`), or when `AMBIFLEX_NO_PING`, `DO_NOT_TRACK` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
-- To turn both off, use the **Anonymous install count** setting.
-- The markers `~/.claude/ambiflex-installed` and `~/.claude/ambiflex-week` record what was sent.
+Nothing leaves your machine by default. The project page and the account hub are private claude.ai pages you publish and join yourself; adoption counting (one empty download from this repository's GitHub release the first time, then one per week) is **off unless you turn it on**. What each part sends, where, and how to stop it: [PRIVACY.md](PRIVACY.md).
 
 ## Develop
 

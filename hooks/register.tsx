@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.24.4'
+export const VERSION = '0.25.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -228,7 +228,12 @@ async function resolveRoot($: $): Promise<string> {
   for (const e of entries) {
     if (e.kind === 'dir' && !e.name.startsWith('.') && await $.fs.exists(`${base}${e.name}/${LOG_FILE}`).catch(() => false)) found.push(`${base}${e.name}/`)
   }
-  return found.length === 1 ? found[0] : base
+  if (found.length === 1) return found[0]!
+  // An editor's or an app's own storage (an ACP client's workspace storage, Application Support, AppData) is not a
+  // project: its tree and files go to the runtime folder rather than leaving a .ambiflex/ behind there.
+  const home = await homeDir($)
+  if (home && isAppStorage(r)) return `${home}/.claude/ambiflex-runtime/scratch/${pathId(r)}/`
+  return base
 }
 
 /**
@@ -359,7 +364,7 @@ async function refreshGit($: $) {
     .catch(() => undefined)
   const text = graph && graph.exitCode === 0
     ? `${branches?.stdout ?? ''}\n${graph.stdout}`
-    : 'No Git repository in this folder.'
+    : graph ? 'No Git repository in this folder.' : 'Git could not be run here (not installed, or this host does not let plugins run commands).'
   const before = await read($, git)
   await update($, git, () => text)
   if (text !== before) await pushGit($, text).catch(() => undefined)
@@ -496,26 +501,98 @@ async function pushSkills($: $) {
 // The install count: once per machine, one GET of an empty release asset; and weekly actives, once per machine per week. GitHub counts the download;
 // nothing identifies the machine, the account or the project. Off with installPing: false or AMBIFLEX_NO_PING=1.
 async function installPing($: $) {
-  if (options.installPing === false) return
+  // Off unless the user turned it on (installPing: true): nothing leaves the machine by default.
+  if (options.installPing !== true) return
   const off = (v: string | undefined) => !!v
   if (off(await $.env.get('AMBIFLEX_NO_PING').catch(() => undefined)) || off(await $.env.get('CLAUDE_CODE_REMOTE').catch(() => undefined))
     || off(await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC').catch(() => undefined)) || off(await $.env.get('DO_NOT_TRACK').catch(() => undefined))) return
   const home = await $.env.get('HOME').catch(() => undefined) ?? await $.env.get('USERPROFILE').catch(() => undefined)
   if (!home) return
   const marker = `${home}/.claude/ambiflex-installed`
-  if (!(await $.fs.exists(marker).catch(() => true))) {
+  if (!(await $.fs.exists(marker).catch(() => true)) && await claim($, `${marker}.lock`)) {
     const r = await $.http.fetch(PING_URL).catch(() => undefined)
-    if (r && r.status < 500) await $.fs.write(marker, `${VERSION}\n`).catch(() => undefined)
+    // Only a success counts: a missing asset or an error is tried again at a later session.
+    if (r && r.status >= 200 && r.status < 300) await $.fs.write(marker, `${VERSION}\n`).catch(() => undefined)
   }
   // Weekly actives: once per machine per ISO week, one GET of that week's empty asset. Its download count is how
   // many machines ran Ambiflex that week; the marker keeps the last week sent. A missing asset is retried next session.
   const week = isoWeek(new Date(await $.clock.now().catch(() => Date.now())))
   const weekMarker = `${home}/.claude/ambiflex-week`
   if (((await $.fs.read(weekMarker).catch(() => '')) as string).trim() === week) return
+  if (!(await claim($, `${weekMarker}.${week}.lock`))) return
   const w = await $.http.fetch(weekUrl(week)).catch(() => undefined)
-  if (w && w.status >= 200 && w.status < 400) await $.fs.write(weekMarker, `${week}\n`).catch(() => undefined)
+  if (w && w.status >= 200 && w.status < 300) await $.fs.write(weekMarker, `${week}\n`).catch(() => undefined)
 }
 
+/**
+ * One session at a time per marker: mkdir is atomic, so of two sessions starting together only one gets the lock.
+ * A lock older than ten minutes is from a session that died: taken over.
+ */
+async function claim($: $, lock: string): Promise<boolean> {
+  const r = await $.process.run(['mkdir', lock]).catch(() => undefined)
+  if (r && r.exitCode === 0) return true
+  const age = await $.process.run(['find', lock, '-maxdepth', '0', '-mmin', '+10']).catch(() => undefined)
+  if (age && age.exitCode === 0 && age.stdout.trim()) { await $.process.run(['rmdir', lock]).catch(() => undefined); return (await $.process.run(['mkdir', lock]).catch(() => undefined))?.exitCode === 0 }
+  return false
+}
+
+
+/** An application's own storage folder rather than a project folder. */
+export function isAppStorage(path: string): boolean {
+  return /\/(Library\/Application Support|\.config|AppData\/(Roaming|Local)|globalStorage|workspaceStorage|\.vscode-oss|\.vscode-server|VSCodium)\//i.test(`${path}/`)
+}
+
+/** A short stable id for a path (folder names never leave the machine as such). */
+export function pathId(text: string): string {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}
+
+/**
+ * Where the plugin keeps what must never sit in a repository: the local page's key, server, page and button queue.
+ * ~/.claude/ambiflex-runtime/<project id>/, readable by the user only.
+ */
+async function runtimeDir($: $): Promise<string | undefined> {
+  const home = await homeDir($)
+  if (!home) return undefined
+  const dir = `${home}/.claude/ambiflex-runtime/${pathId(await rootOf($))}/`
+  await $.process.run(['mkdir', '-p', '-m', '700', dir]).catch(() => undefined)
+  return dir
+}
+
+/** A key from the platform's secure random generator. */
+export function secureKey(len = 32): string {
+  const bytes = new Uint8Array(len)
+  globalThis.crypto.getRandomValues(bytes)
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, len)
+}
+
+/** Anything that looks like a credential in a label is masked before it is stored or synced. */
+export function redact(text: string): string {
+  return text
+    .replace(/\b(authorization|token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|cookie)(\s*[:=]\s*)(?:bearer\s+)?[^\s'"&]+/gi, '$1$2***')
+    .replace(/\bbearer\s+[^\s'"&]+/gi, 'Bearer ***')
+    .replace(/\b(?:gh[pousr]_|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{6,}/g, '***')
+    .replace(/\b[A-Za-z0-9_+/=-]{32,}\b/g, '***')
+    .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, '$1***@')
+    .replace(/(https?:\/\/[^\s?#]+)\?[^\s#]*/gi, '$1?…')
+}
+
+/** Adds lines to .ambiflex/.gitignore, keeping every line already there. */
+export function mergeIgnore(current: string, lines: string[]): string {
+  const have = new Set(current.split('\n').map(l => l.trim()).filter(Boolean))
+  const add = lines.filter(l => !have.has(l))
+  if (!add.length) return current
+  return `${current}${current && !current.endsWith('\n') ? '\n' : ''}${add.join('\n')}\n`
+}
+const RUNTIME_IGNORES = ['worktrees/', 'live.json', 'git.json', 'skills.json', 'usage.json', 'brain.json', '.seen-version', 'docs/', 'local.json', 'local.html', 'serve.py', 'actions.jsonl', 'page-status.json']
+async function ensureIgnores($: $) {
+  const f = `${await rootOf($)}.ambiflex/.gitignore`
+  const cur = (await $.fs.read(f).catch(() => '')) as string
+  const next = mergeIgnore(cur, RUNTIME_IGNORES)
+  if (next !== cur) await $.fs.write(f, next).catch(() => undefined)
+}
 
 /** For every node that names a branch: its commits beyond main, and its PR when `gh` can tell. */
 async function refreshBranches($: $) {
@@ -544,7 +621,7 @@ async function branchFor($: $, id: string): Promise<{ branch: string; path: stri
   const args = exists && exists.exitCode === 0 ? ['git', 'worktree', 'add', path, branch] : ['git', 'worktree', 'add', path, '-b', branch]
   const made = await $.process.run(args, await inRoot($)).catch(() => undefined)
   if (!made || made.exitCode !== 0) return undefined
-  await $.fs.write(`${await rootOf($)}.ambiflex/.gitignore`, 'worktrees/\nlive.json\ngit.json\nskills.json\nusage.json\nbrain.json\n.seen-version\n').catch(() => undefined)
+  await ensureIgnores($)
   if (!node.branch) await commit($, { kind: 'upsert', input: { id, branch } })
   return { branch, path }
 }
@@ -563,9 +640,12 @@ const LIVE_EVERY = 2000
 
 /** "Bash: npm test", "Edit: src/a.ts": the tool and its most telling argument. */
 export function toolLabel(e: { tool: string } & Record<string, unknown>): string {
-  const arg = [e.command, e.file_path, e.pattern, e.description, e.url, e.query, e.path].find(v => typeof v === 'string' && v) as string | undefined
+  // Never a raw command, query or URL: they can carry credentials. A description, a file's name or a host at most.
   const name = e.tool.replace(/^mcp__[^_]+__/, '')
-  const text = `${name}${arg ? `: ${arg.split('\n')[0]}` : ''}`
+  const file = typeof e.file_path === 'string' ? String(e.file_path).split('/').pop() : undefined
+  const host = typeof e.url === 'string' ? (/^https?:\/\/(?:[^@/]*@)?([^/:?#@]+)/.exec(String(e.url))?.[1]) : undefined
+  const arg = [e.description, file, host].find(v => typeof v === 'string' && v) as string | undefined
+  const text = redact(`${name}${arg ? `: ${String(arg).split('\n')[0]}` : ''}`)
   return text.length > 60 ? `${text.slice(0, 59)}…` : text
 }
 
@@ -652,7 +732,18 @@ async function saveHub($: $, url: string) {
   ;(await ctx($) as { hubUrl?: string }).hubUrl = url
   const home = await homeDir($)
   if (home) await $.fs.write(`${home}/${HUB_FILE}`, `${JSON.stringify({ url })}\n`).catch(() => undefined)
-  if (!(await ctx($)).blocked) await $.fs.write(`${await rootOf($)}.ambiflex/hub.json`, `${JSON.stringify({ url })}\n`).catch(() => undefined)
+  if (!(await ctx($)).blocked) await setHubJoined($, await hubJoined($), url)
+}
+
+/** Whether this project chose to report to the account's hub: .ambiflex/hub.json with joined: true. */
+async function hubJoined($: $): Promise<boolean> {
+  try { return !!(JSON.parse((await $.fs.read(`${await rootOf($)}.ambiflex/hub.json`).catch(() => '')) as string || '{}') as { joined?: boolean }).joined } catch { return false }
+}
+async function setHubJoined($: $, joined: boolean, url?: string) {
+  const f = `${await rootOf($)}.ambiflex/hub.json`
+  let rec: { url?: string; joined?: boolean } = {}
+  try { rec = JSON.parse((await $.fs.read(f).catch(() => '')) as string || '{}') } catch { rec = {} }
+  await $.fs.write(f, `${JSON.stringify({ ...rec, ...(url ? { url } : {}), joined })}\n`).catch(() => undefined)
 }
 
 /** Writes one doc into another page's store (the hub), pinned to the version last seen there. */
@@ -696,7 +787,8 @@ async function sessionRef($: $): Promise<Card['session']> {
   const remote = await $.env.get('CLAUDE_CODE_REMOTE_SESSION_ID').catch(() => undefined)
   if (remote) return { kind: 'cloud', url: `https://claude.ai/code/${remote.replace(/^cse_/, 'session_')}`, label: 'Cloud session' }
   const host = await $.env.get('HOSTNAME').catch(() => undefined) ?? await $.env.get('COMPUTERNAME').catch(() => undefined)
-  return { kind: 'local', label: `${host || 'local machine'} · ${(await rootOf($)).replace(/\/$/, '')}` }
+  // No machine name and no path by default: a local session is named as such (hubShowMachine: true to add the machine).
+  return { kind: 'local', label: options.hubShowMachine && host ? `local session on ${host}` : 'local session' }
 }
 
 /** This project's card into the hub; every two minutes, the hub's project list back into this project's page. */
@@ -706,10 +798,12 @@ async function pushHub($: $, force = false) {
   const now = await $.clock.now()
   if (!force && now - (c.hubAt ?? 0) < HUB_EVERY) return
   c.hubAt = now
+  // Only a project the user enrolled (/ambiflex hub join, or publishing the hub from it) reports to the hub.
+  if (!(await hubJoined($))) return
   const url = await hubUrl($)
   if (!url) {
     const h = c as { hubHinted?: boolean }
-    if (!h.hubHinted && await artifactUrl($)) { h.hubHinted = true; $.ui.toast('One page for all your projects and their alerts: /ambiflex hub') }
+    if (!h.hubHinted && await artifactUrl($)) { h.hubHinted = true; $.ui.toast('One page for all your projects and their alerts: /ambiflex hub join') }
     return
   }
   const t = await read($, tree)
@@ -727,6 +821,14 @@ async function pushHub($: $, force = false) {
 
 /** /ambiflex hub: finds the account's hub, or has Claude publish it; writes its page next to the tree. */
 async function hubRequest($: $, arg: string): Promise<{ ask?: string; text: string }> {
+  if (arg === 'join') { await setHubJoined($, true); await pushHub($, true).catch(() => undefined); return { text: `${await projectName($)} reports to the account's hub now${(await hubUrl($)) ? '' : ' (no hub found yet: /ambiflex hub publishes it)'}. Its name, goal, progress, alerts and page link appear there and in the project switcher of every joined project's page. /ambiflex hub leave stops it.` } }
+  if (arg === 'leave') {
+    await setHubJoined($, false)
+    const url = await hubUrl($)
+    if (url) await $.tool.call({ tool: 'ArtifactData', action: 'delete', url, collection: 'projects', doc_id: hubSlug(await projectName($)) } as never).catch(() => undefined)
+    return { text: `${await projectName($)} no longer reports to the hub; its card is removed.` }
+  }
+  await setHubJoined($, true)
   if (/^https:\/\/claude\.ai\//.test(arg)) { await saveHub($, arg); await pushHub($, true).catch(() => undefined); return { text: `Hub recorded: ${arg}. This project's card is in it now.` } }
   const file = `${await rootOf($)}.ambiflex/hub.html`
   await $.fs.write(file, HUB_HTML.replace('__AMBIFLEX_VERSION__', VERSION))
@@ -807,7 +909,7 @@ async function noteBackground($: $, ran: unknown, text: string, label: string) {
   const startedAt = await nowIso($)
   const eta = expectedEnd(text, startedAt)
   // The node and the duration are shown apart: the label keeps what the task does.
-  const what = label.replace(/#n\d+\s*/g, '').replace(/\s*[(,;·-]?\s*(?:~|≈|eta\b)[^)]*\)?\s*$/i, '').trim()
+  const what = redact(label).replace(/#n\d+\s*/g, '').replace(/\s*[(,;·-]?\s*(?:~|≈|eta\b)[^)]*\)?\s*$/i, '').trim()
   if (node) await setLive($, `bg:${id}`, { node, who: 'background task', phase: 'tool', label: what.slice(0, 80), bg: true, startedAt, ...(eta ? { eta } : {}) })
 }
 
@@ -1204,30 +1306,39 @@ async function doctor($: $): Promise<string> {
  */
 async function localPage($: $, arg?: string): Promise<string> {
   const root = await rootOf($)
-  const dir = `${root}.ambiflex/`
-  const conf = JSON.parse(((await $.fs.read(`${dir}local.json`).catch(() => '')) as string) || '{}') as { port?: number; key?: string; pid?: number }
-  const alive = async (pid?: number) => !!pid && (await $.process.run(['kill', '-0', String(pid)]).catch(() => undefined))?.exitCode === 0
+  const docs = `${root}.ambiflex/docs/`
+  const dir = await runtimeDir($)
+  if (!dir) return 'Cannot start the local page: no home folder on this host.'
+  const c = await ctx($) as { localStop?: () => void; localKey?: string; localPort?: number }
   if (arg === 'stop') {
-    if (await alive(conf.pid)) await $.process.run(['kill', String(conf.pid)]).catch(() => undefined)
+    c.localStop?.(); c.localStop = undefined; c.localKey = undefined
     return 'Local page stopped.'
   }
-  await $.fs.write(`${dir}local.html`, PAGE_HTML.replace('__AMBIFLEX_VERSION__', VERSION).replace('<script>', `${localShim(conf.key ?? '')}\n<script>`))
-  if (!(await alive(conf.pid)) || !conf.key || !conf.port) {
-    const key = Array.from({ length: 24 }, () => 'abcdefghijkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 32)]).join('')
-    const port = 47000 + Math.floor(Math.random() * 2000)
+  if (!c.localStop) {
+    // The key comes from the secure generator, the server and its queue live outside the repository, and the server
+    // runs from an argument vector, never through a shell: a folder name is data, never a command.
+    const key = secureKey()
+    const port = 47000 + (parseInt(secureKey(4), 16) % 2000)
     await $.fs.write(`${dir}serve.py`, SERVER_PY)
     await $.fs.write(`${dir}local.html`, PAGE_HTML.replace('__AMBIFLEX_VERSION__', VERSION).replace('<script>', `${localShim(key)}\n<script>`))
-    const ran = await $.process.run(['sh', '-c', `cd "${dir}" && nohup python3 serve.py ${port} ${key} >/dev/null 2>&1 & echo $!`]).catch(() => undefined)
-    const pid = Number(String(ran?.stdout ?? '').trim()) || undefined
-    if (!pid) return 'Could not start the local page: python3 is needed (macOS and Linux have it).'
-    conf.port = port; conf.key = key; conf.pid = pid
-    await $.fs.write(`${dir}local.json`, `${JSON.stringify(conf)}\n`)
-    const ign = (await $.fs.read(`${dir}.gitignore`).catch(() => '')) as string
-    if (!ign.includes('local.json')) await $.fs.write(`${dir}.gitignore`, `${ign}${ign && !ign.endsWith('\n') ? '\n' : ''}local.json\nlocal.html\nserve.py\nactions.jsonl\ndocs/\n`).catch(() => undefined)
+    await $.fs.write(`${dir}actions.jsonl`, '')
+    let stop = false
+    const child = $.process.spawn({ argv: ['python3', `${dir}serve.py`, String(port), key, docs], cwd: dir })
+    c.localStop = () => { stop = true; void child.return?.(undefined as never) }
+    const ready = new Promise<boolean>(resolve => {
+      void (async () => {
+        try { for await (const piece of child) { if (stop) break; if (String((piece as { text?: string }).text ?? '').includes('ready')) resolve(true) } } catch { /* could not start */ }
+        resolve(false); c.localStop = undefined; c.localKey = undefined
+      })()
+      setTimeout(() => resolve(false), 4000)
+    })
+    if (!(await ready)) { c.localStop?.(); c.localStop = undefined; return 'Could not start the local page: python3 is needed (macOS and Linux have it).' }
+    c.localKey = key; c.localPort = port
   }
+  await ensureIgnores($)
   await save($, await read($, tree)).catch(() => undefined)
   await pushLive($, true).catch(() => undefined)
-  return `Local page: http://127.0.0.1:${conf.port}/?k=${conf.key}\nIt reads this session's state from disk every second and its buttons reach this session directly. In Chrome: menu > Cast, save and share > Install page as app, for a window of its own. /ambiflex local stop stops it.`
+  return `Local page: http://127.0.0.1:${c.localPort}/?k=${c.localKey}\nIt reads this session's state from disk every second and its buttons reach this session only. It stops with the session, or with /ambiflex local stop.`
 }
 
 /** `/ambiflex project [folder|clear]`: attaches this session to a project folder (its tree, its page), or says which one it uses. */
@@ -1254,17 +1365,22 @@ async function attachProject($: $, arg?: string): Promise<string> {
   return `This session is attached to ${c.root!.replace(/\/$/, '')}: ${t.goal || t.nodes.length ? `tree "${t.goal.slice(0, 80)}", ${t.nodes.length} nodes` : 'no tree yet there'}${page ? `, page ${page}` : ''}. Run /ambiflex page here so this session publishes and watches that project's page.`
 }
 
-/** Buttons pressed on the local page wait in .ambiflex/actions.jsonl: taken in order, once, then handed to this session. */
+/**
+ * Buttons pressed on the local page wait in the runtime folder (never in the repository), and only while this
+ * session runs its own local page: each line carries the page's key, so a file put there by anything else is refused.
+ */
 async function drainLocal($: $, force = false) {
-  const c = await ctx($) as { drainedAt?: number }
-  // Throttled between tool calls; the end of a turn always looks.
+  const c = await ctx($) as { drainedAt?: number; localKey?: string }
+  if (!c.localKey) return
   if (!force && c.drainedAt && Date.now() - c.drainedAt < 3000) return
   c.drainedAt = Date.now()
-  const path = `${await rootOf($)}.ambiflex/actions.jsonl`
+  const dir = await runtimeDir($)
+  if (!dir) return
+  const path = `${dir}actions.jsonl`
   const text = (await $.fs.read(path).catch(() => '')) as string
   if (!text.trim()) return
   await $.fs.write(path, '')
-  const asks = parseActions(text)
+  const asks = parseActions(text, c.localKey)
   if (asks.length) await handOver($, asks.join('\n\n'))
 }
 
@@ -1635,9 +1751,10 @@ type Options = {
   rateLimitAlertPct: number
   hourlyRateUsd: number
   parallel: number
+  hubShowMachine: boolean
 }
 
-let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, autoRepublish: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0, parallel: 3 }
+let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, brainUserLevel: false, autoRepublish: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0, parallel: 3, installPing: false, hubShowMachine: false }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -1853,7 +1970,7 @@ export const register: Register = (on, opts) => {
     await $.command.register({
       name: 'ambiflex',
       description: 'Open the reasoning tree. "auto [turns]" runs the plan without approval, "stop" ends it, "status" reports, "page" publishes the interactive page.',
-      argumentHint: '[auto [turns] | stop | status | page | hub [url] | local [stop] | update | altitude | doctor]',
+      argumentHint: '[auto [turns] | stop | status | page | hub [join|leave|url] | local [stop] | update | altitude | doctor]',
     })
     const t = await read($, tree)
     if (t.nodes.length > 0) openPane($).catch(() => undefined)
@@ -2238,7 +2355,7 @@ ${outline(await read($, tree))}` }
     const nudge = [await untracked($, String(e.command ?? ''), !!(e as { run_in_background?: boolean }).run_in_background).catch(() => undefined), await silentRunsNote($).catch(() => undefined)].filter(Boolean).join(' ') || undefined
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshGit($).catch(() => undefined)
-    if (bgRun) await noteBackground($, ran, `${(e as { description?: string }).description ?? ''} ${e.command}`, `Bash: ${(e as { description?: string }).description || String(e.command).slice(0, 60)}`).catch(() => undefined)
+    if (bgRun) await noteBackground($, ran, `${(e as { description?: string }).description ?? ''} ${e.command}`, `Bash: ${(e as { description?: string }).description || 'background command'}`).catch(() => undefined)
     if (nudge) {
       $.ui.toast(nudge)
       const r = ran as { result?: unknown }

@@ -330,7 +330,10 @@ test('an accepted proposal can close a node, with its verification', () => {
 })
 
 test('local actions: torn lines are skipped and repeats kept once', () => {
-  expect(parseActions('{"text":"a"}\n{"tex\n{"text":"a"}\n{"text":"b"}\n')).toEqual(['a', 'b'])
+  expect(parseActions('{"text":"a","k":"K"}\n{"tex\n{"text":"a","k":"K"}\n{"text":"b","k":"K"}\n', 'K')).toEqual(['a', 'b'])
+  // A line without this session's key (a file shipped in a repository, another process) is never handed over.
+  expect(parseActions('{"text":"rm -rf ~"}\n{"text":"x","k":"other"}\n', 'K')).toEqual([])
+  expect(parseActions('{"text":"a","k":"K"}\n', '')).toEqual([])
 })
 
 test('overhead: only what Ambiflex adds, as a range, with plugin turns measured and auto work apart', () => {
