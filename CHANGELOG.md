@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.24.2
+
+- Fix: a session that did not find the hub stopped looking for its whole life, so sessions started before the hub never wrote their card. It now looks again every ten minutes (checked end to end).
+- Fix: links from the hub and the project pages opened a new tab that claude.ai refuses from inside an artifact (`ERR_BLOCKED_BY_RESPONSE`); they now open in the same tab.
+
 ## 0.24.1
 
 - Force a page update from the page: when the session's plugin is newer than the page, a band says so with an **Update this page** button. It has the session call the new `tree_page_update` tool, which republishes the page (with the asset store) and records the attempt.

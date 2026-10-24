@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.24.1'
+export const VERSION = '0.24.2'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -632,14 +632,16 @@ const HUB_EVERY = 60e3, NAV_EVERY = 120e3
 
 /** The hub's URL: this machine's record, else the project's (committed, so cloud sessions find it), else the account's pages. */
 async function hubUrl($: $): Promise<string | undefined> {
-  const c = await ctx($) as { hubUrl?: string; hubLooked?: boolean }
+  const c = await ctx($) as { hubUrl?: string; hubLookedAt?: number }
   if (c.hubUrl) return c.hubUrl
   const home = await homeDir($)
   const found = (home ? hubFromJson(await $.fs.read(`${home}/${HUB_FILE}`).catch(() => '') as string) : undefined)
     ?? hubFromJson(await $.fs.read(`${await rootOf($)}.ambiflex/hub.json`).catch(() => '') as string)
   if (found) return (c.hubUrl = found)
-  if (c.hubLooked) return undefined
-  c.hubLooked = true
+  // Not found yet: look again every ten minutes, so a hub created after the session started is picked up.
+  const now = await $.clock.now()
+  if (c.hubLookedAt && now - c.hubLookedAt < 10 * 60e3) return undefined
+  c.hubLookedAt = now
   const listing = await $.tool.call({ tool: 'Artifact', action: 'list', limit: 200 } as never).catch(() => undefined)
   const url = listing ? hubFromListing(typeof listing === 'string' ? listing : JSON.stringify(listing).replace(/\\n/g, '\n')) : undefined
   if (url) await saveHub($, url)
