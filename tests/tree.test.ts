@@ -3,7 +3,7 @@ import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine
 import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
-import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -361,4 +361,20 @@ test('weekly actives: ISO weeks and that week\'s asset', () => {
   expect(isoWeek(new Date('2027-01-01T12:00:00Z'))).toBe('2026-W53')
   expect(isoWeek(new Date('2026-01-01T12:00:00Z'))).toBe('2026-W01')
   expect(weekUrl('2026-W43')).toBe('https://github.com/ImadeBenToumAI/ambiflex/releases/download/install-ping/active-2026-W43.txt')
+})
+
+test('auto mode batches the nodes that can run together, never a node before its parent or earlier step', () => {
+  // sample(): n3 is being explored (resumed first), n2 is ready, n4 waits for both.
+  expect(autoBatch(sample(), 3).map(n => n.id)).toEqual(['n3', 'n2'])
+  expect(autoBatch(sample(), 1).map(n => n.id)).toEqual(['n3'])
+  // Numbered steps under one parent: only the first is ready.
+  let s = upsert(emptyTree(), { title: 'Track', lens: 'depth', status: 'done', verification: 'x' }, T0).tree
+  s = upsert(s, { title: 'Step 1', lens: 'step', parents: ['n1'], seq: 1 }, T0).tree
+  s = upsert(s, { title: 'Step 2', lens: 'step', parents: ['n1'], seq: 2 }, T0).tree
+  expect(autoBatch(s, 3).map(n => n.id)).toEqual(['n2'])
+  // A node held by a subagent is left to it; an orphaned exploring node is resumed first.
+  s = upsert(s, { id: 'n2', status: 'exploring', agent: 'worker' }, T0).tree
+  expect(autoBatch(s, 3).map(n => n.id)).toEqual([])
+  s = upsert(s, { id: 'n2', agent: '' }, T0).tree
+  expect(autoBatch(s, 3).map(n => n.id)).toEqual(['n2'])
 })

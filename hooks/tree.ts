@@ -220,6 +220,11 @@ export function current(tree: Tree): TreeNode | undefined {
  * order it was written, then shallowest.
  */
 export function nextOpen(tree: Tree): TreeNode | undefined {
+  return readyOpen(tree)[0]
+}
+
+/** Every open node that can start now (parents settled, earlier numbered steps finished), in nextOpen's order. */
+export function readyOpen(tree: Tree): TreeNode[] {
   const byId = new Map(tree.nodes.map(n => [n.id, n]))
   const settled = (id: string) => {
     const p = byId.get(id)
@@ -229,12 +234,23 @@ export function nextOpen(tree: Tree): TreeNode | undefined {
   const stepsBefore = (n: TreeNode) => n.seq === undefined ? [] : tree.nodes.filter(o => o.id !== n.id && o.seq !== undefined && o.seq < n.seq! && (o.parents[0] ?? '') === (n.parents[0] ?? ''))
   const candidates = tree.nodes.filter(n => n.status === 'proposed' && n.lens !== 'goal' && n.parents.every(settled) && stepsBefore(n).every(o => settled(o.id)))
   const d = depths(tree)
-  return candidates.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER) || a.createdAt.localeCompare(b.createdAt) || (d.get(a.id) ?? 0) - (d.get(b.id) ?? 0))[0]
+  return candidates.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER) || a.createdAt.localeCompare(b.createdAt) || (d.get(a.id) ?? 0) - (d.get(b.id) ?? 0))
 }
 
 /** What auto mode works on next: a non-goal node already being explored (resume it), else the next open one. */
 export function autoTarget(tree: Tree): TreeNode | undefined {
   return tree.nodes.find(n => n.status === 'exploring' && n.lens !== 'goal') ?? nextOpen(tree)
+}
+
+/**
+ * What auto mode can run at once: nodes being explored by no subagent (resume them), then open nodes ready now.
+ * Ready nodes never depend on each other: a child waits for its parents and a numbered step for the earlier ones,
+ * so none of them is ready before the other is settled. Nodes already held by a subagent are left to it.
+ */
+export function autoBatch(tree: Tree, max: number): TreeNode[] {
+  const resume = tree.nodes.filter(n => n.status === 'exploring' && n.lens !== 'goal' && !n.agent)
+  const batch = [...resume, ...readyOpen(tree)]
+  return batch.slice(0, Math.max(1, max))
 }
 
 /** "30min" | "2h" | "3d" | "1w" (also "2 h", "1.5d") → minutes; 0 when absent. A day is 8 h, a week 5 days. */

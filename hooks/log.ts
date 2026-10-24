@@ -10,7 +10,7 @@ export type Event =
   | { t: string; s: string; kind: 'goal'; goal: string }
   | { t: string; s: string; kind: 'upsert'; input: NodeInput; isNew?: boolean }
   | { t: string; s: string; kind: 'merge'; sources: string[]; into: string }
-  | { t: string; s: string; kind: 'auto'; on: boolean; maxTurns?: number; turns?: number }
+  | { t: string; s: string; kind: 'auto'; on: boolean; maxTurns?: number; turns?: number; parallel?: number }
   | { t: string; s: string; kind: 'review'; review: Review }
   | { t: string; s: string; kind: 'decide'; review: string; ids: string[]; accept: boolean }
 
@@ -83,6 +83,7 @@ export function replay(events: Event[]): Tree {
             on: e.on,
             startedAt: e.on && (e.turns === undefined || !tree.auto.startedAt) ? e.t : tree.auto.startedAt,
             maxTurns: e.maxTurns ?? tree.auto.maxTurns,
+            ...(e.parallel ?? tree.auto.parallel ? { parallel: e.parallel ?? tree.auto.parallel } : {}),
             turns: e.turns ?? (e.on && e.turns === undefined ? 0 : tree.auto.turns),
           },
         }
@@ -112,6 +113,6 @@ export function eventsFromSnapshot(tree: Tree, session: string): Event[] {
       events.push({ t: updatedAt, s: session, kind: 'upsert', input: { id: n.id, parents: n.parents, status: n.status, verification: n.verification } })
     }
   }
-  if (tree.auto.on) events.push({ t: tree.auto.startedAt ?? t0, s: session, kind: 'auto', on: true, maxTurns: tree.auto.maxTurns, turns: tree.auto.turns })
+  if (tree.auto.on) events.push({ t: tree.auto.startedAt ?? t0, s: session, kind: 'auto', on: true, maxTurns: tree.auto.maxTurns, turns: tree.auto.turns, ...(tree.auto.parallel ? { parallel: tree.auto.parallel } : {}) })
   return events
 }

@@ -18,7 +18,7 @@ import type { SkillFiles } from './skills'
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
+  merge, autoTarget, autoBatch, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
   addReview, decide, proofScore, blockers, altitudeBrief,
@@ -85,7 +85,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.21.1'
+export const VERSION = '0.22.0'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -109,7 +109,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 5. Messages starting with [tree] come from the user's panel or page: do what they ask and update the tree.
 6. If a Git branch serves a node, fill in branch.
 7. Tree search: when a node has several competing tracks (children), give each a judge (judge field: the test, benchmark or metric that scores it), then call tree_explore on the parent: the plugin spawns one subagent per track in parallel, each in its own worktree branch, and records the SCORE each reports. Then prune (tree_prune) and merge the winner. Show the budget (agents × minutes) before calling tree_explore; in auto mode go ahead within the plan's budget.
-8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. Work on the node the prompt names, verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
+8. Auto mode: when the tree says auto mode is ON, you are executing the plan without asking for approval. Work on the node the prompt names (when it names several independent nodes, spawn one subagent per node in one message, each description starting with its #id), verify it with an external judge, set done with its verification, and stop the turn. The plugin starts the next node by itself. Ask the user only when a node cannot be completed without a decision that is theirs (money, access, publishing to the outside).
 9. Mobile page: ${ARTIFACT_FILE} holds this project's "Ambiflex" claude.ai page ({url, project}). The plugin syncs the tree to it after every change by itself; you do not sync it by hand. Actions from that page arrive as artifact comments starting with [tree]: do them, update the tree, reply on the thread (ArtifactComments reply) and resolve it.
 10. Order, importance, iterations: when children must run in order (data → training → evaluation), give them seq 1, 2, 3; give each node a weight from 1 (minor) to 5 (critical) by how much the goal depends on it, not by its duration. When a node iterates towards a measurable target, set its acceptance criterion and record every attempt with tree_iterate (result, value, passed): it is done only when an attempt passes.
 11. Scores: when the judge reads lower-is-better (WER, CER, loss, latency, cost), set direction "lower" and the unit ("%", "ms", "$"): ranking and pruning then keep the smallest. Read the stored node echoed by tree_upsert: it is what the user sees.
@@ -339,6 +339,7 @@ function applyOn(t: Tree, e: Event): Tree {
         on: e.on,
         startedAt: e.on && (e.turns === undefined || !t.auto.startedAt) ? e.t : t.auto.startedAt,
         maxTurns: e.maxTurns ?? t.auto.maxTurns,
+        ...(e.parallel ?? t.auto.parallel ? { parallel: e.parallel ?? t.auto.parallel } : {}),
         turns: e.turns ?? (e.on && e.turns === undefined ? 0 : t.auto.turns),
       },
     }
@@ -777,10 +778,10 @@ async function trackAgentEnd($: $, key: string, id: string | undefined) {
 
 /** Auto mode: start, then after each answered turn, hand the next open node to the model. */
 /** `kickNow` only where no turn is being held (a command, a button); a tool hook leaves the kick to turn.complete. */
-async function startAuto($: $, maxTurns?: number, kickNow = false) {
+async function startAuto($: $, maxTurns?: number, kickNow = false, parallel?: number) {
   const t0 = await read($, tree)
   await save($, { ...t0, cost: { ...t0.cost, spentUsd: 0 } })
-  const next = await commit($, { kind: 'auto', on: true, maxTurns: maxTurns ?? t0.auto.maxTurns })
+  const next = await commit($, { kind: 'auto', on: true, maxTurns: maxTurns ?? t0.auto.maxTurns, ...(parallel ? { parallel: Math.max(1, Math.round(parallel)) } : {}) })
   ;(await ctx($)).warnedBudget = false
   const cost = await trackCost($).catch(() => next.cost)
   const e = eta(next)
@@ -791,6 +792,7 @@ async function startAuto($: $, maxTurns?: number, kickNow = false) {
     + `. Expected end: ${endLabel(next, new Date())}`
     + `. Estimated cost: $${cost.estimateUsd} at $${cost.ratePerHour}/h${cost.assumedRate ? ' (assumed for ' + (cost.model || 'this model') + ')' : ' (measured)'}`
     + (options.budgetUsd > 0 ? `, budget $${options.budgetUsd}` : '')
+    + `. Up to ${next.auto.parallel ?? options.parallel} independent nodes at once, one subagent each`
     + `. Stops after ${next.auto.maxTurns} turns, on your interruption, on the budget, or with /ambiflex stop.`
   $.ui.toast(summary)
   if (kickNow) await kick($).catch(() => undefined)
@@ -922,7 +924,7 @@ async function registerTools($: $) {
     }],
     ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
       type: 'object',
-      properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' } },
+      properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' }, parallel: { type: 'number', description: 'Most independent nodes run at once, one subagent each (default 3; 1 = one node per turn).' } },
       required: ['on'],
     }],
   ] as const) {
@@ -1189,6 +1191,15 @@ async function kick($: $) {
   // several hand-overs before running one, and only turns actually worked should spend the budget.
   const turn = t.auto.turns + 1
   const e = eta(t)
+  const batch = autoBatch(t, t.auto.parallel ?? options.parallel)
+  if (batch.length > 1) {
+    $.ui.status(`auto ${turn}/${t.auto.maxTurns} · ${batch.map(n => n.id).join(' ')} in parallel · ETA ${human(e.critical)}`)
+    await handOver($, `[tree] Auto mode, turn ${turn}/${t.auto.maxTurns}. These ${batch.length} nodes have no dependency on one another: run them in parallel. `
+      + `In one message, spawn one subagent per node with the Agent tool, each description starting with its #id so the plugin gives it its own worktree branch and shows it working: `
+      + batch.map(n => `#${n.id} "${n.title}" (${LENS_LABEL[n.lens]}${n.estimate ? `, estimate ${n.estimate}` : ''})`).join('; ') + '. '
+      + `Brief each agent with the node's detail, its judge, and ask it to end its report with SCORE and RESULT lines. When they have all reported, check each result with an external judge, tree_upsert each node done with its verification (or review, saying why), and stop the turn; I will hand you the next batch.`)
+    return
+  }
   $.ui.status(`auto ${turn}/${t.auto.maxTurns} · ${target.id} · ETA ${human(e.critical)}`)
   await handOver($, `[tree] Auto mode, turn ${turn}/${t.auto.maxTurns}. Work on ${target.id} "${target.title}" (${LENS_LABEL[target.lens]}${target.estimate ? `, estimate ${target.estimate}` : ''}). `
     + `Set it exploring, do the work, verify it with an external judge, then tree_upsert it done with its verification (or review if nothing can prove it, saying why). Create sub-steps if needed. Stop the turn when this node is settled; I will hand you the next one.`)
@@ -1346,6 +1357,11 @@ async function drawTree($: $, e: ResolveInput) {
         <Button key="act-agent" onPress={() => steer(`Spawn a subagent to explore ${node.id} "${node.title}" (put #${node.id} in its description).`)}>
           Spawn agent
         </Button>
+        {node.status === 'proposed' && (
+          <Button key="act-parallel" onPress={() => steer(`Start ${node.id} "${node.title}" now, in parallel with the work in progress: spawn a subagent in the background (run_in_background) with #${node.id} at the start of its description, briefed with the node's detail and judge. Keep working on what you were doing; when it reports, verify its result and set the node done or review.`)}>
+            Run in parallel
+          </Button>
+        )}
         <Button key="act-explore" onPress={() => steer(`Tree search under ${node.id} "${node.title}": make sure each proposed child track has a judge, show me the budget (agents × minutes), then tree_explore ${node.id}.`)}>
           Explore tracks
         </Button>
@@ -1404,9 +1420,10 @@ type Options = {
   alertPct: number
   rateLimitAlertPct: number
   hourlyRateUsd: number
+  parallel: number
 }
 
-let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, autoRepublish: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0 }
+let options: Options = { compactAtPct: 70, routing: 'off', topModel: '', planUsd: 0, installPing: true, brainUserLevel: false, autoRepublish: true, wakeWord: 'ambiflex', budgetUsd: 0, alertPct: 80, rateLimitAlertPct: 80, hourlyRateUsd: 0, parallel: 3 }
 const warnedLimits = new Set<string>()
 
 /** Reads the session's own cost ledger and rate limits; projects what is left; raises the alerts. */
@@ -1884,8 +1901,8 @@ ${outline(await read($, tree))}` }
   })
 
   on('tool.call', { tool: 'mcp__ambiflex__tree_auto' }, async ($, e) => {
-    const { on: turnOn, maxTurns } = e as unknown as { on?: boolean; maxTurns?: number }
-    if (turnOn) return { result: `${await startAuto($, maxTurns)} End this turn: the plugin hands you the first node right after.` }
+    const { on: turnOn, maxTurns, parallel } = e as unknown as { on?: boolean; maxTurns?: number; parallel?: number }
+    if (turnOn) return { result: `${await startAuto($, maxTurns, false, parallel)} End this turn: the plugin hands you the first node right after.` }
     await stopAuto($, 'turned off by the model')
     return { result: 'Auto mode off.' }
   })

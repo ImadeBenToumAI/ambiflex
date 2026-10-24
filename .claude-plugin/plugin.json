@@ -1,6 +1,6 @@
 {
   "name": "ambiflex",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Ambitious reasoning tree for Claude Code: Felix Rieseberg's Altitude / Depth / Range method, drawn live, steerable by touch, with autonomous execution and an end-to-end ETA.",
   "author": {
     "name": "ImadeBenToumAI"
@@ -36,6 +36,12 @@
       "description": "Your own $/hour figure for cost projections (0 = measure it from this session, assumed before the first minutes).",
       "default": 0,
       "title": "Hourly rate (USD)"
+    },
+    "parallel": {
+      "type": "number",
+      "description": "Auto mode runs up to this many independent nodes at once, one subagent each in its own worktree branch (1 = one node per turn). Nodes that wait on a parent or an earlier numbered step never start together.",
+      "default": 3,
+      "title": "Parallel nodes in auto mode"
     },
     "compactAtPct": {
       "type": "number",

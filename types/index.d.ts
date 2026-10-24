@@ -61,6 +61,8 @@ export type Auto = {
   startedAt?: string
   turns: number
   maxTurns: number
+  /** Most independent nodes auto mode runs at once, one subagent each. */
+  parallel?: number
 }
 
 export type Cost = {

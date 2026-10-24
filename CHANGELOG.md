@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.22.0
+
+- Auto mode runs independent nodes in parallel: each turn it hands over every node that can start now (up to the new `parallel` setting, default 3), one subagent per node, each in its own worktree branch. Nodes waiting on a parent or an earlier numbered step never start together; `parallel: 1` keeps one node per turn.
+- `tree_auto` takes a `parallel` parameter.
+- Panel: **Run in parallel** starts a proposed node in a background subagent while the current work goes on.
+
 ## 0.21.1
 
 - **Routing can only save, and the panel says so honestly.** Routing no longer raises a node's effort on its own: altitude and goal nodes run on the top model at high effort, and only a failed attempt moves effort up.
