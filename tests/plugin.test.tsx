@@ -453,7 +453,7 @@ test('/ambiflex routing sets model routing for the project, and the page then ca
   expect(JSON.parse(disk.get('/p/.ambiflex/settings.json') ?? '{}')).toEqual({ routing: 'suggest', topModel: 'fable' })
   const snap = JSON.parse(disk.get('/p/.ambiflex/tree.json') ?? '{}')
   expect(snap.routing).toBe('suggest')
-  expect(snap.routes?.n1).toMatchObject({ model: 'fable', effort: 'max' })
+  expect(snap.routes?.n1).toMatchObject({ model: 'fable', effort: 'high' })
   const bad = await $.command.run({ command: 'ambiflex', args: 'routing turbo' } as never) as { text: string }
   expect(bad.text).toContain('Unknown mode')
 })

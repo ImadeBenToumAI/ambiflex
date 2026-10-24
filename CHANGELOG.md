@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.21.1
+
+- **Routing can only save, and the panel says so honestly.** Routing no longer raises a node's effort on its own: altitude and goal nodes run on the top model at high effort, and only a failed attempt moves effort up.
+- **Like-for-like comparison, retries included.** "Without routing" is now the same nodes on the top model at the same effort, and both sides are priced as expected cost over up to four attempts (a failure runs again one tier up with more effort), with assumed first-try failure rates shown in the panel next to the tree's own failed attempts.
+- A saving reads "Saved, net of Ambiflex" in green; a loss reads "Extra cost, net of Ambiflex" in red, with the reason (for example, every node is already on the top model).
+- `tools/ambiflex-split.py` now refuses to run while git worktrees sit in the root `.ambiflex`.
+
 ## 0.21.0
 
 - **One project per session.** `/ambiflex project <folder>` attaches a session to its project folder: its tree, its page and its live activity then live there. The choice is kept per session in `~/.claude/ambiflex-sessions.json`, never in the repository. `/ambiflex project` alone says which folder the session uses; `/ambiflex project clear` detaches it.

@@ -13,7 +13,7 @@ test('routing: the plan on the strongest allowed model; each node on what it nee
   expect(route(node({ title: 'Rename the helper', weight: 1 }), 3)).toMatchObject({ model: 'haiku', effort: 'low' })
   expect(route(node({ title: 'Add the parser', weight: 3 }), 3)).toMatchObject({ model: 'sonnet', effort: 'medium' })
   expect(route(node({ title: 'Depth track', lens: 'depth' }), 3)).toMatchObject({ model: 'opus', effort: 'high' })
-  expect(route(node({ title: 'Durable outcome', lens: 'altitude' }), 3)).toMatchObject({ model: 'fable', effort: 'max' })
+  expect(route(node({ title: 'Durable outcome', lens: 'altitude' }), 3)).toMatchObject({ model: 'fable', effort: 'high' })
   expect(route(node({ title: 'Durable outcome', lens: 'altitude' }), 2).model).toBe('opus')
   // Critical or risky never goes below the strong tier, even when it looks mechanical.
   expect(route(node({ title: 'Update docs', weight: 5 }), 3).model).toBe('opus')

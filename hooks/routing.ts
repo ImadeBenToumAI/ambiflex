@@ -41,8 +41,9 @@ export function route(n: TreeNode, cap: number): Route {
   const text = `${n.title} ${n.summary ?? ''} ${n.detail ?? ''}`
   const weight = n.weight ?? 1
   let tier: number, effort: Effort, why: string
-  // The durable outcome deserves the strongest model at full effort, like the plan itself.
-  if (n.lens === 'altitude' || n.lens === 'goal') { tier = TIERS.length - 1; effort = 'max'; why = `${n.lens}: the strongest model, full effort` }
+  // The durable outcome deserves the strongest model, like the plan itself; routing never raises the effort on its own
+  // (only a failed attempt does), so it can only cost less than running the whole plan on the top model.
+  if (n.lens === 'altitude' || n.lens === 'goal') { tier = TIERS.length - 1; effort = 'high'; why = `${n.lens}: the strongest model` }
   else if (n.lens !== 'step') { tier = 2; effort = 'high'; why = `${n.lens} track: reasoning` }
   else if (weight >= 4) { tier = 2; effort = 'high'; why = `importance ${weight}` }
   else if ((n.kind ? n.kind === 'mechanical' : MECHANICAL.test(text)) && weight <= 2) { tier = 0; effort = 'low'; why = 'mechanical step' }
