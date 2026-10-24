@@ -2,7 +2,9 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
-## 0.25.0 — security and privacy release
+## 0.25.0
+
+Security and privacy release.
 
 Acts on the security and privacy review of 24 October 2026 (version 0.24.4).
 
