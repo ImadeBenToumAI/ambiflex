@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.24.0'
+export const VERSION = '0.24.1'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -1092,6 +1092,7 @@ async function registerTools($: $) {
       properties: { review: { type: 'string', description: 'Review id (r1…); omitted, the latest.' }, ids: { type: 'array', items: { type: 'string' }, description: 'Proposal ids (p1…), or ["all"].' }, accept: { type: 'boolean' } },
       required: ['ids', 'accept'],
     }],
+    ['tree_page_update', 'Republishes this project\'s interactive page with this plugin version (what the page\'s "Update this page" button asks): returns the steps to follow.', { type: 'object' }],
     ['tree_auto', 'Turns auto mode on or off: the plugin then hands you the next open node after each turn, without asking the user.', {
       type: 'object',
       properties: { on: { type: 'boolean' }, maxTurns: { type: 'number', description: 'Turn budget (default 40).' }, parallel: { type: 'number', description: 'Most independent nodes run at once, one subagent each (default 3; 1 = one node per turn).' } },
@@ -1183,6 +1184,7 @@ async function doctor($: $): Promise<string> {
   if (!url) return `No page recorded for this project: /ambiflex page publishes it.${cost}`
   await pushLive($, true).catch(() => undefined)
   const lines = [`Page: ${url}`, `Plugin ${VERSION}, session ${c.sid}.`]
+  lines.push(await pageStatusLine($))
   if (c.syncReason) lines.push(`NOT syncing: ${c.syncReason}${c.syncFailedAt ? ` (since ${c.syncFailedAt})` : ''}. Retried every 2 minutes.`)
   else if (c.syncOkAt) lines.push(`Syncing: last write ${c.syncOkAt}. The page shows live activity, tasks and subagents.`)
   else lines.push('No write yet in this session.')
@@ -1301,6 +1303,22 @@ async function pageRequest($: $): Promise<{ ask: string; text: string }> {
   return { ask, text: known ? `page.html regenerated (${VERSION}); Claude publishes it now${url ? `: ${url} (open it in its own browser window to keep it on another screen)` : ''}.` : `page.html generated (${VERSION}); Claude publishes it now.` }
 }
 
+/** Where the last republish of this project's page stands, kept in .ambiflex/page-status.json. */
+type PageStatus = { at: string; from?: string; to: string; via: 'session' | 'page' | 'command'; state: 'asked' | 'skipped'; why?: string }
+async function notePageStatus($: $, st: Omit<PageStatus, 'at'>) {
+  await $.fs.write(`${await rootOf($)}.ambiflex/page-status.json`, `${JSON.stringify({ ...st, at: await nowIso($) })}\n`).catch(() => undefined)
+}
+async function pageStatusLine($: $): Promise<string> {
+  let rec: { pageVersion?: string } = {}
+  try { rec = JSON.parse(await $.fs.read(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => '') as string) } catch { /* none */ }
+  let st: PageStatus | undefined
+  try { st = JSON.parse(await $.fs.read(`${await rootOf($)}.ambiflex/page-status.json`).catch(() => '') as string) } catch { /* none */ }
+  const pv = rec.pageVersion ?? 'unknown'
+  const behind = !rec.pageVersion || newerVersion(VERSION, rec.pageVersion)
+  const last = st ? ` Last republish: ${st.state} ${st.at} (${st.via}${st.from ? `, ${st.from} → ${st.to}` : ''})${st.why ? `: ${st.why}` : ''}.` : ' No republish recorded yet.'
+  return `Page version ${pv}, plugin ${VERSION}: ${behind ? 'the page is BEHIND. The "Update this page" band on the page, or /ambiflex page here, republishes it.' : 'up to date.'}${last}`
+}
+
 /**
  * A page published by an older version: after an update, the session of the project republishes it by itself
  * (once per session), so the page never lags behind the plugin and its buttons keep answering this session.
@@ -1315,8 +1333,9 @@ async function stalePage($: $) {
   if (!rec.url || rec.project !== await projectName($)) return
   if (rec.pageVersion && !newerVersion(VERSION, rec.pageVersion)) return
   const was = rec.pageVersion ?? 'an older version'
-  if (!options.autoRepublish) { $.ui.toast(`The page is ${was}, the plugin ${VERSION}: /ambiflex page to update it.`); return }
+  if (!options.autoRepublish) { await notePageStatus($, { from: rec.pageVersion, to: VERSION, via: 'session', state: 'skipped', why: 'autoRepublish is off' }); $.ui.toast(`The page is ${was}, the plugin ${VERSION}: /ambiflex page to update it.`); return }
   $.ui.toast(`Republishing the page: ${was} → ${VERSION}`)
+  await notePageStatus($, { from: rec.pageVersion, to: VERSION, via: 'session', state: 'asked' })
   const { ask } = await pageRequest($)
   await handOver($, `${ask} (The page was published by ${was}; this session runs ${VERSION}.)`)
 }
@@ -1825,7 +1844,7 @@ export const register: Register = (on, opts) => {
 ${outline(await read($, tree))}` }
     // The ask must start a turn of its own: left in the command's context it would wait for the user's next message,
     // and a command may not submit a prompt while it holds its turn, so it goes out when that turn completes.
-    if (verb === 'page') { const r = await pageRequest($); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
+    if (verb === 'page') { const r = await pageRequest($); await notePageStatus($, { to: VERSION, via: 'command', state: 'asked' }); (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'hub') { const r = await hubRequest($, arg ?? ''); if (r.ask) (await ctx($) as { queued?: string }).queued = r.ask; return { text: r.text } }
     if (verb === 'update') return { text: await selfUpdate($) }
     if (verb === 'doctor') return { text: await doctor($) }
@@ -1872,6 +1891,8 @@ ${outline(await read($, tree))}` }
     ;(await ctx($)).busy = true
     for (const id of endedTasks(e.text)) await setLive($, `bg:${id}`, null).catch(() => undefined)
     // A turn started by a page action (a comment or a queued click): say so on the page at once.
+    // "Update this page" on the page: the turn calls tree_page_update; no second republish at its end.
+    if (/\[tree\] Update this Ambiflex page now/.test(e.text)) (await ctx($) as { pageChecked?: boolean }).pageChecked = true
     const asked = /\[tree\] ([^\n]{1,240})/.exec(e.text)
     if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString() }
     // A message from the page's composer: say it was received, then (turn.complete) send the answer back.
@@ -2076,6 +2097,15 @@ ${outline(await read($, tree))}` }
       lines.push(`${n.id} ${ok ? 'passes' : exit ? `FAILS (exit ${exit[1]})` : 'not run (refused or no output)'}: ${n.verifyCmd}`)
     }
     return { result: lines.join('\n') }
+  })
+
+  on('tool.call', { tool: 'mcp__ambiflex__tree_page_update' }, async ($) => {
+    let rec: { pageVersion?: string } = {}
+    try { rec = JSON.parse(await $.fs.read(`${await rootOf($)}${ARTIFACT_FILE}`).catch(() => '') as string) } catch { /* none */ }
+    const r = await pageRequest($)
+    await notePageStatus($, { from: rec.pageVersion, to: VERSION, via: 'page', state: 'asked' })
+    ;(await ctx($) as { pageChecked?: boolean }).pageChecked = true
+    return { result: `${r.ask.replace(/^\[tree\] /, '')} Do it now, in this turn.` }
   })
 
   on('tool.call', { tool: 'mcp__ambiflex__tree_auto' }, async ($, e) => {

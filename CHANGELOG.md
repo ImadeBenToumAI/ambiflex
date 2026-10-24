@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.24.1
+
+- Force a page update from the page: when the session's plugin is newer than the page, a band says so with an **Update this page** button. It has the session call the new `tree_page_update` tool, which republishes the page (with the asset store) and records the attempt.
+- `/ambiflex doctor` reports the page's version against the plugin's and the last republish attempt (`.ambiflex/page-status.json`).
+- The nightly republish task also finds every "Ambiflex · …" page of the account and the hub's project pages.
+
 ## 0.24.0
 
 - Talk to Claude from a node: double-click it (or **Message Claude** in its sheet) for a composer like the chat box. Attach files (click, paste or drop; stored in the page's asset store, small text files inline), dictate (the browser's speech recognition when the view allows it, macOS dictation otherwise), send with ⌘/Ctrl+Enter.
