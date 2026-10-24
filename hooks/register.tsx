@@ -24,7 +24,7 @@ import {
   merge, autoTarget, autoBatch, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
-  addReview, decide, proofScore, blockers, altitudeBrief,
+  addReview, decide, proofScore, blockers, altitudeBrief, handoffLine, inScope,
 } from './tree'
 
 const PLUGIN = 'ambiflex'
@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.26.0'
-export const WHATS_NEW = 'Archi tab: ask Claude to map this project\'s infrastructure; it scans GCP, AWS and Azure read-only and the page draws resources, flows and risks with the providers\' official icons (IPs and ids masked until Unmask). High risks become hub alerts.'
+export const VERSION = '0.27.0'
+export const WHATS_NEW = 'Long-task harness: in auto mode a node is done only with the ambiflex-reviewer\'s evidence table (a read-only subagent that opens the sources); each node keeps a handoff a new session resumes from; a node\'s scope refuses writes outside it.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -119,6 +119,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 14. Proof and altitude: progress counts finished work; proof counts what is shown toward the goal (validated by the user, a criterion met with a replayable proof, a verification). When proof stalls, a critical node keeps missing, or the user asks to step back, take altitude (tree_altitude): the strongest model reviews the whole plan and proposes changes, which the user accepts or refuses (tree_review_decide); never apply them yourself.
 13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
+15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places. Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
 const NODE_SCHEMA = {
@@ -151,6 +152,15 @@ const NODE_SCHEMA = {
     blockedOn: { type: 'string', description: 'Required with status blocked: what or whom the node waits on (e.g. "native speaker verdict on 12 clips").' },
     movedTo: { type: 'string', description: 'Required with status moved: where the work lives now (another tree, project or URL).' },
     verifyCmd: { type: 'string', description: 'Shell command whose exit status re-proves the verification (exit 0 = still true). tree_verify re-runs it.' },
+    evidence: {
+      type: 'array', description: 'The ambiflex-reviewer\'s table: one row per claim of the result, with the source it opened. A node with an incorrect or unresolved row stays in review; in auto mode, done requires this table.',
+      items: { type: 'object', properties: { claim: { type: 'string' }, source: { type: 'string', description: 'The file:line, command output or page opened.' }, verdict: { type: 'string', enum: ['confirmed', 'incorrect', 'unresolved'] }, note: { type: 'string', description: 'For incorrect: the conflicting evidence and the correction; for unresolved: the missing evidence.' } }, required: ['claim', 'source', 'verdict'] },
+    },
+    handoff: {
+      type: 'object', description: 'Where a later session resumes this node: write it after each meaningful stage and before stopping. A new session continues from it instead of starting over.',
+      properties: { files: { type: 'array', items: { type: 'string' }, description: 'Files the work left (paths).' }, checks: { type: 'array', items: { type: 'string' }, description: 'Checks done, with their result.' }, open: { type: 'array', items: { type: 'string' }, description: 'Open questions.' }, next: { type: 'string', description: 'The next action.' } },
+    },
+    scope: { type: 'array', items: { type: 'string' }, description: 'Paths (globs from the project root, e.g. "src/auth/**", "docs/*.md") this node may write. While it is worked, Edit and Write outside them are refused. Empty array clears it.' },
   },
 } as const
 
@@ -883,6 +893,16 @@ async function pushInfra($: $) {
   await pushDoc($, 'infra', { ...infra, icons, terms: Object.fromEntries(Object.entries(PACKS).map(([k, v]) => [k, v.terms])) } as unknown as Record<string, unknown>, true)
 }
 
+/** The node the writer works on, when that node has a scope the file falls outside of. */
+async function outOfScope($: $, file: string, agentId?: string): Promise<{ id: string; scope: string[] } | undefined> {
+  if (!file) return undefined
+  const t = await read($, tree)
+  const nodeId = agentId ? (await read($, live))[agentId]?.node : mainNode(t)
+  const n = nodeId ? t.nodes.find(x => x.id === nodeId) : undefined
+  if (!n?.scope?.length || n.status !== 'exploring') return undefined
+  return inScope(n.scope, file, await rootOf($)) ? undefined : { id: n.id, scope: n.scope }
+}
+
 const docVersions: Record<string, number | undefined> = {}
 // A write went through only when the tool says it committed: the reply also echoes data, which may hold any word.
 const failed = (r: unknown) => !r || !/committed/i.test(typeof r === 'string' ? r : JSON.stringify((r as { result?: unknown })?.result ?? r))
@@ -1583,12 +1603,14 @@ async function kick($: $) {
     await handOver($, `[tree] Auto mode, turn ${turn}/${t.auto.maxTurns}. These ${batch.length} nodes have no dependency on one another: run them in parallel. `
       + `In one message, spawn one subagent per node with the Agent tool, each description starting with its #id so the plugin gives it its own worktree branch and shows it working: `
       + batch.map(n => `#${n.id} "${n.title}" (${LENS_LABEL[n.lens]}${n.estimate ? `, estimate ${n.estimate}` : ''})`).join('; ') + '. '
-      + `Brief each agent with the node's detail, its judge, and ask it to end its report with SCORE and RESULT lines. When they have all reported, check each result with an external judge, tree_upsert each node done with its verification (or review, saying why), and stop the turn; I will hand you the next batch.`)
+      + `Brief each agent with the node's detail, its judge, its handoff if it has one, and ask it to write the node's handoff after each stage and to end its report with SCORE and RESULT lines. When they have all reported, have the ambiflex-reviewer check each result, tree_upsert each node done with its verification and the reviewer's evidence (or review, saying why), and stop the turn; I will hand you the next batch.`)
     return
   }
   $.ui.status(`auto ${turn}/${t.auto.maxTurns} · ${target.id} · ETA ${human(e.critical)}`)
   await handOver($, `[tree] Auto mode, turn ${turn}/${t.auto.maxTurns}. Work on ${target.id} "${target.title}" (${LENS_LABEL[target.lens]}${target.estimate ? `, estimate ${target.estimate}` : ''}). `
-    + `Set it exploring, do the work, verify it with an external judge, then tree_upsert it done with its verification (or review if nothing can prove it, saying why). Create sub-steps if needed. Stop the turn when this node is settled; I will hand you the next one.`)
+    + (target.handoff ? `Resume from its handoff (${handoffLine(target.handoff)}); do not start it over. ` : '')
+    + (target.scope?.length ? `Write only inside its scope: ${target.scope.join(', ')}. ` : '')
+    + `Set it exploring, do the work, write its handoff after each stage, verify it with an external judge, then spawn the ambiflex-reviewer on the result and tree_upsert it done with its verification and the reviewer's evidence (or review if nothing can prove it, saying why). Create sub-steps if needed. Stop the turn when this node is settled; I will hand you the next one.`)
 }
 
 async function drawTree($: $, e: ResolveInput) {
@@ -2189,14 +2211,24 @@ ${outline(await read($, tree))}` }
     const input = Object.fromEntries(Object.keys(NODE_SCHEMA.properties).filter(k => raw[k] !== undefined).map(k => [k, raw[k]]))
     if (input.status === 'validated') delete input.status
     const before = await read($, tree)
+    const prior = before.nodes.find(n => n.id === input.id)
+    const reviewNote: string[] = []
+    // In auto mode nobody watches: done needs the reviewer's table, not only the worker's word.
+    if (before.auto.on && input.status === 'done' && !((input.evidence as unknown[] | undefined) ?? prior?.evidence)?.length) {
+      input.status = 'review'
+      reviewNote.push('kept at "needs review": in auto mode, done needs the ambiflex-reviewer\'s evidence table (spawn it, then tree_upsert with evidence)')
+    }
+    if (input.handoff) input.handoff = { ...(input.handoff as object), at: await nowIso($) }
+    if (Array.isArray(input.scope) && !input.scope.length) input.scope = undefined
     const isNew = !input.id || !before.nodes.some(n => n.id === input.id)
     // An update to an id this tree does not have is a mistake (another project's tree, a typo), not a new node.
     if (input.id && isNew && !input.title) return { result: `No node ${input.id} in this tree (${before.nodes.length} nodes, goal "${before.goal.slice(0, 60)}"). Nothing written. Check the id with tree_get, or give a title to create a new node.` }
     const id = (input.id as string | undefined) ?? nextId(before)
     const after = await commit($, { kind: 'upsert', input: { ...(input as never as object), id } as never, isNew })
     const node = after.nodes.find(n => n.id === id)!
-    const notes: string[] = []
-    if (input.status === 'done' && node.status === 'review') notes.push('kept at "needs review": no verification was given, or the acceptance criterion has no passing iteration')
+    const notes: string[] = [...reviewNote]
+    if (node.evidence?.some(x => x.verdict !== 'confirmed') && node.status === 'review') notes.push(`kept at "needs review": ${node.evidence.filter(x => x.verdict !== 'confirmed').length} evidence row(s) incorrect or unresolved`)
+    if (input.status === 'done' && node.status === 'review' && !reviewNote.length) notes.push('kept at "needs review": no verification was given, or the acceptance criterion has no passing iteration')
     if (input.status === 'blocked' && node.status !== 'blocked') notes.push('not blocked: blockedOn is required')
     if (input.status === 'moved' && node.status !== 'moved') notes.push('not moved: movedTo is required')
     // Read the write back from disk: what a later session (and the page) will see.
@@ -2332,7 +2364,8 @@ ${outline(await read($, tree))}` }
     let id: string | undefined
     try {
       const t = await read($, tree)
-      id = nodeRef(`${e.description ?? ''} ${e.prompt ?? ''}`, t)
+      // The reviewer reads the main checkout: it is never given a node's worktree.
+      id = String((e as { subagent_type?: string }).subagent_type ?? '').endsWith('ambiflex-reviewer') ? undefined : nodeRef(`${e.description ?? ''} ${e.prompt ?? ''}`, t)
       await update($, agents, list => [...list, key])
       if (id) await commit($, { kind: 'upsert', input: { id, status: 'exploring', agent: e.description ?? 'subagent' } })
     } catch {
@@ -2408,8 +2441,10 @@ ${outline(await read($, tree))}` }
     return ran
   })
   for (const tool of ['Edit', 'Write', 'NotebookEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
-    const ran = await next(e)
     const file = String((e as { file_path?: string; notebook_path?: string }).file_path ?? (e as { notebook_path?: string }).notebook_path ?? '')
+    const out = await outOfScope($, file, e.agentId).catch(() => undefined)
+    if (out) { $.ui.toast(`Ambiflex: write refused, outside the scope of ${out.id}`); return { result: `Refused by Ambiflex: ${file} is outside the scope of ${out.id} (${out.scope.join(', ')}). Write inside it, or widen the scope with tree_upsert if the node truly needs this file.` } as never }
+    const ran = await next(e)
     const name = skillOf(file)
     if (file) await touchBrain($, file, e.agentId).catch(() => undefined)
     if (name) { await noteSkill($, name, 'develop', e.agentId, file.replace(/^.*\/\.claude\/skills\//, '')).catch(() => undefined); await pushSkills($).catch(() => undefined) }

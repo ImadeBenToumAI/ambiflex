@@ -46,6 +46,12 @@ export type TreeNode = {
   effort?: string
   /** What a light model judged this node to be, for routing: mechanical, standard or risky. */
   kind?: 'mechanical' | 'standard' | 'risky'
+  /** The reviewer's table: each claim of the result, the source opened to check it, and its verdict. */
+  evidence?: Evidence[]
+  /** Where to resume: the files the work left, the checks done, the open questions and the next action. */
+  handoff?: Handoff
+  /** Paths (globs from the project root) this node's work may write; edits elsewhere are refused while it is worked. */
+  scope?: string[]
   /** Each attempt at reaching the acceptance criterion, oldest first. */
   iterations?: Iteration[]
   startedAt?: string
@@ -53,6 +59,9 @@ export type TreeNode = {
   createdAt: string
   updatedAt: string
 }
+
+export type Evidence = { claim: string; source: string; verdict: 'confirmed' | 'incorrect' | 'unresolved'; note?: string }
+export type Handoff = { files?: string[]; checks?: string[]; open?: string[]; next?: string; at?: string }
 
 export type Iteration = { n: number; result: string; value?: number; passed: boolean; at: string }
 

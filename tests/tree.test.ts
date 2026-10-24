@@ -3,7 +3,8 @@ import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine
 import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
-import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert } from '../hooks/tree'
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine
+} from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
 
@@ -380,4 +381,15 @@ test('auto mode batches the nodes that can run together, never a node before its
   expect(autoBatch(s, 3).map(n => n.id)).toEqual([])
   s = upsert(s, { id: 'n2', agent: '' }, T0).tree
   expect(autoBatch(s, 3).map(n => n.id)).toEqual(['n2'])
+})
+
+test('scope globs: ** spans folders, * stays in one, worktrees count as the root', () => {
+  expect(globRe('drafts/**').test('drafts/a/b.md')).toBe(true)
+  expect(globRe('src/*.ts').test('src/a/b.ts')).toBe(false)
+  expect(globRe('src/**/*.ts').test('src/b.ts')).toBe(true)
+  expect(inScope(['drafts/**'], '/repo/.ambiflex/worktrees/n3/drafts/x.md', '/repo/')).toBe(true)
+  expect(inScope(['drafts/**'], '/repo/published/x.md', '/repo/')).toBe(false)
+  expect(inScope(['drafts/**'], '/etc/passwd', '/repo/')).toBe(false)
+  expect(inScope(undefined, '/anything', '/repo/')).toBe(true)
+  expect(handoffLine({ next: 'n', open: ['q'] })).toBe('next: n · open: q')
 })

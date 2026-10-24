@@ -95,6 +95,9 @@ export function upsert(tree: Tree, input: NodeInput, now: string): { tree: Tree;
   const acceptance = input.acceptance ?? existing?.acceptance
   const tries = input.iterations ?? existing?.iterations ?? []
   if (status === 'done' && acceptance && !tries[tries.length - 1]?.passed) status = 'review'
+  // A reviewer's table that finds a claim wrong or unproven keeps the node in review until the claim is fixed.
+  const evidence = input.evidence ?? existing?.evidence
+  if (status === 'done' && evidence?.some(x => x.verdict !== 'confirmed')) status = 'review'
   // A run merges with the one stored: a heartbeat or a state change need not repeat the resource.
   const run = input.run ? { ...existing?.run, ...stripUndefined(input.run as never) } as TreeNode['run'] : existing?.run
   if (run && input.run) {
@@ -536,7 +539,10 @@ export function outline(tree: Tree): string {
     + (n.weight !== undefined && n.weight !== 1 ? ` weight ${n.weight}/5` : '')
     + (n.acceptance ? ` accept: ${cut(n.acceptance, 80)}` : '')
     + (n.iterations?.length ? ` ↻${n.iterations.length} (last: ${n.iterations[n.iterations.length - 1].passed ? 'passed' : 'not yet'}, ${cut(n.iterations[n.iterations.length - 1].result, 60)})` : '')
-    + (n.summary ? `\n    ${cut(n.summary, 200)}` : ''),
+    + (n.scope?.length ? ` scope: ${n.scope.slice(0, 4).join(', ')}` : '')
+    + (n.evidence?.length ? ` evidence: ${n.evidence.filter(x => x.verdict === 'confirmed').length}/${n.evidence.length} confirmed` : '')
+    + (n.summary ? `\n    ${cut(n.summary, 200)}` : '')
+    + (n.handoff && !['done', 'validated', 'merged', 'abandoned', 'moved'].includes(n.status) ? `\n    handoff (${n.handoff.at ?? '?'}): ${handoffLine(n.handoff)}` : ''),
   )
   const auto = tree.auto.on ? `Auto mode: ON (turn ${tree.auto.turns}/${tree.auto.maxTurns}, started ${tree.auto.startedAt ?? '?'})` : 'Auto mode: off'
   return `Goal: ${cut(tree.goal || '(not set)', 200)}\nProgress: ${p.finished}/${p.total} live nodes (${p.pct}% weighted by importance), ${p.exploring} exploring, ${p.review} need review, ${p.blocked} blocked${p.closed ? `; ${p.closed} abandoned or moved, not counted` : ''}\n`
@@ -710,4 +716,36 @@ export function altitudeBrief(tree: Tree, now: string): string {
     `BLOCKERS (proof points each would add):\n${b.map(x => `- ${x.id} ${x.title} [${x.kind}, ${x.points} pts]: ${x.why}`).join('\n') || '- none detected'}`,
     `NODES AND RESULTS:\n${results || '(no nodes)'}`,
   ].join('\n\n')
+}
+
+/** A handoff in one line: next action first, then open questions, checks done and files. */
+export function handoffLine(h: NonNullable<TreeNode['handoff']>): string {
+  return [h.next ? `next: ${cut(h.next, 160)}` : '', h.open?.length ? `open: ${h.open.slice(0, 4).map(x => cut(x, 80)).join('; ')}` : '',
+    h.checks?.length ? `checks: ${h.checks.slice(0, 4).map(x => cut(x, 80)).join('; ')}` : '', h.files?.length ? `files: ${h.files.slice(0, 8).join(', ')}` : ''].filter(Boolean).join(' · ') || '(empty)'
+}
+
+/** A glob from the project root ("drafts/**", "src/*.ts") as a regular expression. */
+export function globRe(glob: string): RegExp {
+  const g = glob.replace(/^\.\//, '').replace(/\/$/, '/**')
+  let re = ''
+  for (let i = 0; i < g.length; i++) {
+    const ch = g[i]!
+    if (ch === '*' && g[i + 1] === '*') { re += g[i + 2] === '/' ? '(?:.*/)?' : '.*'; i += g[i + 2] === '/' ? 2 : 1 }
+    else if (ch === '*') re += '[^/]*'
+    else if (ch === '?') re += '[^/]'
+    else re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${re}$`)
+}
+
+/**
+ * Whether a write to `file` stays inside a node's scope. The path is taken relative to the project root;
+ * a node's worktree (.ambiflex/worktrees/<id>/) counts as the root. No scope: anything goes.
+ */
+export function inScope(scope: string[] | undefined, file: string, root: string): boolean {
+  if (!scope?.length) return true
+  let rel = file.startsWith(root) ? file.slice(root.length) : file
+  rel = rel.replace(/^\/+/, '').replace(/^\.ambiflex\/worktrees\/[^/]+\//, '')
+  if (rel.startsWith('/') || rel.startsWith('..')) return false
+  return scope.some(g => globRe(g).test(rel))
 }

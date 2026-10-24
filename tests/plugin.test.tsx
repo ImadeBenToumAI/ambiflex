@@ -96,7 +96,10 @@ test('auto mode hands the next open node over after each answered turn, then sto
 
   await start($, prompts[1])
   expect(await autoLine()).toContain('turn 1/3')
-  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'test green' } as never)
+  // In auto mode the worker's word is not enough: done waits for the reviewer's table.
+  const bare = await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'test green' } as never)
+  expect(String((bare as { result?: unknown }).result)).toContain('ambiflex-reviewer')
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'test green', evidence: [{ claim: 'tests pass', source: 'bun test: 12 pass', verdict: 'confirmed' }] } as never)
   await turn($, 'answer')
   expect(prompts.length).toBe(3)
   expect(prompts[2]).toContain('[tree] Auto mode, turn 2/3. Work on n2 "B"')
@@ -735,4 +738,30 @@ test('tree_infra: with nothing, how to scan; with resources, the map on disk and
   expect(String((r as { result?: unknown }).result)).toContain('2 resources, 1 flows, 1 risks (1 high)')
   const disk = [...files].find(([p]) => p.endsWith('.ambiflex/infra.json'))?.[1] ?? ''
   expect(JSON.parse(disk).resources.length).toBe(2)
+})
+
+test('harness: a scoped node refuses writes outside its scope; a handoff reaches the next session and the auto hand-over', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  bottoms(on, [], files)
+  const prompts: string[] = []
+  on('prompt.submit', async (_$, e) => { prompts.push(e.text); return { text: e.text } as never })
+  on('tool.call', { tool: 'Write' }, async () => ({ result: 'written' }) as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Docs' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Draft', lens: 'step', status: 'exploring', scope: ['drafts/**'], handoff: { files: ['drafts/a.md'], next: 'check the dates' } } as never)
+  const inside = await $.tool.call({ tool: 'Write', file_path: 'drafts/sub/a.md', content: 'x' } as never)
+  expect(String((inside as { result?: unknown }).result)).toBe('written')
+  const outside = await $.tool.call({ tool: 'Write', file_path: 'published/a.md', content: 'x' } as never)
+  expect(String((outside as { result?: unknown }).result)).toContain('outside the scope of n1')
+  const got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
+  expect(got).toContain('next: check the dates')
+  expect(got).toContain('scope: drafts/**')
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'proposed' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_auto', on: true, maxTurns: 2 } as never)
+  await turn($, 'answer')
+  expect(prompts[0]).toContain('Resume from its handoff (next: check the dates')
+  expect(prompts[0]).toContain('Write only inside its scope: drafts/**')
+  // A reviewer's row that is not confirmed keeps the node in review.
+  const r = await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'v', evidence: [{ claim: 'date', source: 'sources/a.md:3', verdict: 'incorrect', note: 'announced, not shipped' }] } as never)
+  expect(String((r as { result?: unknown }).result)).toContain('incorrect or unresolved')
 })

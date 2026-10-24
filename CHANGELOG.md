@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.27.0
+
+- **Evidence reviewer**: a read-only subagent (`ambiflex:ambiflex-reviewer`, high effort) opens the sources and re-runs the checks, then returns one row per claim: confirmed, incorrect (with the correction) or unresolved (with the missing evidence).
+- **Proven done in auto mode**: a node is done only with the reviewer's table; any row not confirmed keeps it in review.
+- **Handoffs**: each node keeps where to resume (files, checks done, open questions, next action); a new session or the next auto turn continues from it instead of starting over.
+- **Write scope**: a node's `scope` globs refuse Edit and Write outside them while the node is worked.
+
 ## 0.26.0
 
 - **Archi tab** after Tree: the project's cloud infrastructure (GCP, AWS, Azure) in three levels: ① an animated overview (one band per cloud, clients and third parties, protocol and port on each flow, risky flows in red), ② network & flows (VPC/VNet, subnets, CIDR, IPs, exposure), ③ security (risks with fixes, IAM, secret names).
