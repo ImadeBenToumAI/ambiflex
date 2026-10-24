@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.24.3
+
+- Fix: the project switcher on project pages was always empty. The `ArtifactData list` answer carries the documents' data in its text, not in its result; the plugin now reads the text (checked end to end).
+
 ## 0.24.2
 
 - Fix: a session that did not find the hub stopped looking for its whole life, so sessions started before the hub never wrote their card. It now looks again every ten minutes (checked end to end).

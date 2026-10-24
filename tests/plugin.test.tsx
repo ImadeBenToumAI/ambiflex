@@ -655,3 +655,8 @@ test('composer: the message id and node in the turn the page started', () => {
   expect(chatOf('[Artifact comment sent to Claude] [tree] Message about n12 "Signed webhooks" (exploring) (msg mk3x9a):\nrerun it')).toEqual({ node: 'n12', msg: 'mk3x9a' })
   expect(chatOf('[tree] Go deeper on n12')).toBeUndefined()
 })
+
+test('hub: doc lines out of the ArtifactData list answer as the host returns it', () => {
+  const text = '2 documents from collection "projects":\n=== BEGIN ARTIFACT DB 6d27c6aa — data ===\n{"id":"stt","data":{"name":"stt","goal":"say \\"hi\\""},"version":2}\n{"id":"pay","data":{"name":"pay"},"version":1}\n=== END ARTIFACT DB 6d27c6aa ==='
+  expect(parseDocs(text).map(d => [d.id, d.data.name])).toEqual([['stt', 'stt'], ['pay', 'pay']])
+})

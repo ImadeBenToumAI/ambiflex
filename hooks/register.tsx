@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.24.2'
+export const VERSION = '0.24.3'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -673,7 +673,9 @@ async function setDocIn($: $, url: string, collection: string, docId: string, da
 /** The docs of one collection of a page's store, as an ArtifactData listing returns them. */
 async function listDocs($: $, url: string, collection: string): Promise<{ id: string; data: Record<string, unknown> }[]> {
   const r = await $.tool.call({ tool: 'ArtifactData', action: 'list', url, collection, query: { limit: 200 } } as never).catch(() => undefined)
-  const text = typeof r === 'string' ? r : JSON.stringify((r as { result?: unknown })?.result ?? r ?? '')
+  // The tool answers { result: { db_read: { docs } }, text }: the text carries the documents' data, one JSON line each.
+  const t = (r as { text?: unknown })?.text
+  const text = typeof r === 'string' ? r : typeof t === 'string' ? t : JSON.stringify((r as { result?: unknown })?.result ?? r ?? '')
   return parseDocs(text)
 }
 
