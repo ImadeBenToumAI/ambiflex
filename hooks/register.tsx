@@ -87,7 +87,7 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.24.3'
+export const VERSION = '0.24.4'
 export const WHATS_NEW = '/ambiflex local: the page served from this machine reads the session state from disk every second (no claude.ai sync in between), and its buttons reach the session directly. Install it as an app from Chrome for a window of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
@@ -615,7 +615,7 @@ async function pushLive($: $, force = false) {
   try {
     const map = await read($, live)
     // at is the heartbeat: the page tells a live session from a silent one by it; busy says a turn is running.
-    const doc = { at: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, session: c.sid,
+    const doc = { at: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, session: c.sid, project: await projectName($), listening: (c as { watchOk?: string }).watchOk ?? '',
       agents: Object.entries(map).map(([id, a]) => ({ id, ...a, ...(c.tasks?.[id]?.length ? { tasks: c.tasks[id] } : {}) })),
       ...(c.tasks?.main?.length && !map.main ? { tasks: c.tasks.main } : {}), ...(c.ack ? { ack: c.ack } : {}) }
     await $.fs.write((await LIVE($)), `${JSON.stringify(doc, null, 2)}\n`).catch(() => undefined)
@@ -1189,6 +1189,9 @@ async function doctor($: $): Promise<string> {
   await pushLive($, true).catch(() => undefined)
   const lines = [`Page: ${url}`, `Plugin ${VERSION}, session ${c.sid}.`]
   lines.push(await pageStatusLine($))
+  await claimWatch($).catch(() => undefined)
+  const w = (c as { watchOk?: string }).watchOk
+  lines.push(w ? `Page buttons: this session watches the page (since ${w}), so clicks reach it.` : 'Page buttons: this session does NOT watch the page; clicks may go to another session or wait in the queue. /ambiflex page here republishes it and takes the watch.')
   if (c.syncReason) lines.push(`NOT syncing: ${c.syncReason}${c.syncFailedAt ? ` (since ${c.syncFailedAt})` : ''}. Retried every 2 minutes.`)
   else if (c.syncOkAt) lines.push(`Syncing: last write ${c.syncOkAt}. The page shows live activity, tasks and subagents.`)
   else lines.push('No write yet in this session.')
@@ -1327,6 +1330,24 @@ async function pageStatusLine($: $): Promise<string> {
  * A page published by an older version: after an update, the session of the project republishes it by itself
  * (once per session), so the page never lags behind the plugin and its buttons keep answering this session.
  */
+/**
+ * The page's buttons reach the session that watches the page. A session that did not publish the page holds no
+ * watch, so its clicks went nowhere or to another session: each session claims its own page's watch at start and
+ * every half hour (ArtifactComments watch), and says so in the live doc.
+ */
+async function claimWatch($: $) {
+  const c = await ctx($) as { watchAt?: number; watchOk?: string; blocked?: boolean }
+  if (c.blocked) return
+  const now = await $.clock.now()
+  if (c.watchAt && now - c.watchAt < 30 * 60e3) return
+  c.watchAt = now
+  const url = await artifactUrl($, true)
+  if (!url) return
+  const r = await $.tool.call({ tool: 'ArtifactComments', action: 'watch', url } as never).catch((err: unknown) => ({ error: String(err) }))
+  const text = JSON.stringify(r ?? '')
+  c.watchOk = /error|denied|refus|not found|cannot/i.test(text) && !/watching|registered|already/i.test(text) ? '' : new Date(now).toISOString()
+}
+
 async function stalePage($: $) {
   const c = await ctx($) as { pageChecked?: boolean; blocked?: boolean }
   if (c.pageChecked || c.blocked) return
@@ -1898,7 +1919,8 @@ ${outline(await read($, tree))}` }
     // "Update this page" on the page: the turn calls tree_page_update; no second republish at its end.
     if (/\[tree\] Update this Ambiflex page now/.test(e.text)) (await ctx($) as { pageChecked?: boolean }).pageChecked = true
     const asked = /\[tree\] ([^\n]{1,240})/.exec(e.text)
-    if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString() }
+    // The receipt says which session got it: the page checks it is this project's own session.
+    if (asked) (await ctx($)).ack = { text: asked[1], at: new Date(await $.clock.now()).toISOString(), project: await projectName($), where: (await sessionRef($)).label } as never
     // A message from the page's composer: say it was received, then (turn.complete) send the answer back.
     const chat = chatOf(e.text)
     ;(await ctx($) as { chat?: { msg: string; node: string } }).chat = chat
@@ -1944,6 +1966,7 @@ ${outline(await read($, tree))}` }
     if (q.queued) { const text = q.queued; q.queued = undefined; await handOver($, text).catch(() => undefined); return ran }
     await trackCost($).catch(() => undefined)
     await stallCheck($).catch(() => undefined)
+    await claimWatch($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await stalePage($).catch(() => undefined)
     if (!(await read($, tree)).auto.on) await drainQueue($).catch(() => undefined)
     await drainLocal($, true).catch(() => undefined)

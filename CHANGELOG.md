@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.24.4
+
+- Clicks reach the project's own session: each session claims its page's watch at its first turn end and every 30 minutes; `/ambiflex doctor` says whether it listens.
+- A receipt names the session that got a click (project and machine); the page warns when another project's session got it, with the fix. The composer says where a message goes.
+- A double tap opens the chat alone (a single tap waits 280 ms before opening the sheet).
+- The microphone button shows only where the frame may use the mic; inside claude.ai the hint points to macOS dictation and how to turn it on.
+
 ## 0.24.3
 
 - Fix: the project switcher on project pages was always empty. The `ArtifactData list` answer carries the documents' data in its text, not in its result; the plugin now reads the text (checked end to end).
