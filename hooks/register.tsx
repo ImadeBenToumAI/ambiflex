@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.28.0'
-export const WHATS_NEW = 'Waiting for you: the page opens one window with everything that needs your approval or review (plan, strategy review, nodes to review, nodes blocked on you), each with a clear message and a box to answer Claude. A sent item says so and leaves once Claude moves the node on; the Inbox button at the top right reopens it.'
+export const VERSION = '0.28.1'
+export const WHATS_NEW = 'Background tasks: the page now counts only the ones still running (an end that lands mid-turn is read; a new session starts with none; an entry whose end was never seen expires). Sounds: short recorded effects replace the synthesised ones.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -704,6 +704,8 @@ async function pushLive($: $, force = false) {
   c.livePushedAt = now
   c.pushing = true
   try {
+    const stale = Object.entries(await read($, live)).filter(([, a]) => staleBackground(a, now)).map(([k]) => k)
+    if (stale.length) await update($, live, m => Object.fromEntries(Object.entries(m).filter(([k]) => !stale.includes(k))))
     const map = await read($, live)
     // at is the heartbeat: the page tells a live session from a silent one by it; busy says a turn is running.
     const doc = { at: new Date(now).toISOString(), busy: !!c.busy, plugin: VERSION, session: c.sid, project: await projectName($), listening: (c as { watchOk?: string }).watchOk ?? '',
@@ -1004,7 +1006,20 @@ export function endedTasks(text: string): string[] {
     const status = /<status>\s*([^<\s]+)\s*<\/status>/.exec(m[1]!)?.[1] ?? ''
     if (id && /complet|fail|kill|stop|error|cancel|done|exit/i.test(status)) out.push(id)
   }
-  return out
+  // The same notice as a structured record: "task_id": "…", … "status": "completed".
+  for (const m of text.matchAll(/task_?id\\?["':\s]+\\?["']?([A-Za-z0-9_-]{4,})[\s\S]{0,300}?status\\?["':\s]+\\?["']?(completed|failed|killed|stopped|cancell?ed|error|exited)/gi)) out.push(m[1]!)
+  return [...new Set(out)]
+}
+
+/**
+ * A background task's entry outlives its task when its end was never seen. Past its expected end by 6 h, or
+ * 12 h old without one, it is dropped: the page then counts only work that can still be running.
+ */
+export function staleBackground(a: LiveActivity, now: number): boolean {
+  if (!a.bg) return false
+  const eta = a.eta ? Date.parse(a.eta) : NaN, start = a.startedAt ? Date.parse(a.startedAt) : Date.parse(a.at || '')
+  if (!isNaN(eta)) return now > eta + 6 * 3600e3
+  return !isNaN(start) && now > start + 12 * 3600e3
 }
 
 /** The node the main loop works on: the latest exploring node no subagent holds. */
@@ -2047,6 +2062,8 @@ export const register: Register = (on, opts) => {
   options = { ...options, ...(opts as Partial<Options>) }
 
   on('session.start', async ($, e, next) => {
+    // Background shells and monitors end with the process that ran them: a new session starts with none.
+    await update($, live, m => Object.fromEntries(Object.entries(m).filter(([, a]) => !a.bg))).catch(() => undefined)
     const c = await ctx($)
     c.startedAt = await $.clock.now().catch(() => 0)
     c.usdAtStart = (await $.session.usage().catch(() => undefined))?.cost?.usd ?? 0
@@ -2478,6 +2495,19 @@ ${outline(await read($, tree))}` }
       if (r && typeof r.result === 'string') return { ...r, result: `${r.result}\n\n[Ambiflex] ${nudge}` } as typeof ran
     }
     return ran
+  })
+
+  // A task's end often lands mid-turn, as a row of its own rather than in the next prompt: read every row for it.
+  on('session.append', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      const text = JSON.stringify((e as { message?: { content?: unknown } }).message?.content ?? '')
+      if (/task-notification|task_?id/i.test(text)) {
+        const map = await read($, live)
+        for (const id of endedTasks(text.replace(/\\n/g, '\n').replace(/\\"/g, '"'))) if (map[`bg:${id}`]) await setLive($, `bg:${id}`, null)
+      }
+    } catch { /* tracking never blocks the conversation */ }
+    return r
   })
 
   // A Monitor works in the background like a shell run; TaskStop ends either.

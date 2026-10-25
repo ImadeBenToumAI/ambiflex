@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
+import { VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, staleBackground, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -764,4 +764,31 @@ test('harness: a scoped node refuses writes outside its scope; a handoff reaches
   // A reviewer's row that is not confirmed keeps the node in review.
   const r = await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'v', evidence: [{ claim: 'date', source: 'sources/a.md:3', verdict: 'incorrect', note: 'announced, not shipped' }] } as never)
   expect(String((r as { result?: unknown }).result)).toContain('incorrect or unresolved')
+})
+
+test('background tasks: an end is read in either form, and an entry whose end was never seen expires', () => {
+  expect(endedTasks('<task-notification><task-id>b1x2y3</task-id><status>completed</status></task-notification>')).toEqual(['b1x2y3'])
+  expect(endedTasks('{"type":"task_notification","task_id":"bz9k2m","status":"failed","summary":"x"}')).toEqual(['bz9k2m'])
+  expect(endedTasks('{"task_id":"bq1w2e","status":"running"}')).toEqual([])
+  const now = Date.parse('2026-10-25T20:00:00Z')
+  expect(staleBackground({ node: 'n1', who: 'b', phase: 'tool', label: '', at: '', bg: true, startedAt: '2026-10-25T10:00:00Z', eta: '2026-10-25T12:00:00Z' } as never, now)).toBe(true)
+  expect(staleBackground({ node: 'n1', who: 'b', phase: 'tool', label: '', at: '', bg: true, startedAt: '2026-10-25T18:00:00Z', eta: '2026-10-25T19:00:00Z' } as never, now)).toBe(false)
+  expect(staleBackground({ node: 'n1', who: 'b', phase: 'tool', label: '', at: '', bg: true, startedAt: '2026-10-25T07:00:00Z' } as never, now)).toBe(true)
+  expect(staleBackground({ node: 'n1', who: 'b', phase: 'tool', label: '', at: '', startedAt: '2026-10-20T07:00:00Z' } as never, now)).toBe(false)
+})
+
+test('background tasks: a launch shows on its node, its end (a row appended mid-turn) clears it, a new session starts with none', async ($, on) => {
+  mock.clock(on)
+  const files = new Map<string, string>()
+  bottoms(on, [], files)
+  on('tool.call', { tool: 'Bash' }, async () => ({ result: { backgroundTaskId: 'bqtb68bwr' }, text: 'Command running in background with ID: bqtb68bwr.' }) as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'bg' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Wait job', lens: 'step', status: 'exploring' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'sleep 4', run_in_background: true, description: '#n1 short wait (~1 min)' } as never)
+  await flush()
+  const live = () => JSON.parse([...files].find(([p]) => p.endsWith('.ambiflex/live.json'))?.[1] ?? '{"agents":[]}').agents.map((a: { id: string }) => a.id)
+  expect(live()).toContain('bg:bqtb68bwr')
+  await $.session.append({ door: 'attachment', origin: { kind: 'engine' }, uuid: 'u1', message: { type: 'attachment', role: 'user', content: [{ type: 'text', text: '<task-notification>\n<task-id>bqtb68bwr</task-id>\n<status>completed</status>\n</task-notification>' }] } } as never)
+  await flush()
+  expect(live()).not.toContain('bg:bqtb68bwr')
 })

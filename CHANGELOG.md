@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.28.1
+
+- **Background tasks count only what runs**: a task's end that lands mid-turn is now read, so a finished task leaves the page; a new session starts with none; an entry whose end was never seen expires (6 h after its expected end, or 12 h without one).
+- **Recorded sounds**: short effects from the ElevenLabs sound library replace the synthesised ones, one per event; the synthesis plays when a clip cannot. The legend credits elevenlabs.io.
+
 ## 0.28.0
 
 - **Waiting for you**: the project page gathers everything that needs your approval or review in one window: the plan to approve, a strategy review to decide, nodes to review (with proof and the reviewer's evidence), nodes blocked on you. Each item has a clear message, its actions (Validate, Approve plan, Open node) and a box to answer Claude about that node.
