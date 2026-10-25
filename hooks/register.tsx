@@ -9,7 +9,7 @@ import { PAGE_HTML } from './page'
 import { HUB_HTML } from './hubpage'
 import { HUB_FILE, HUB_TITLE, hubFromJson, hubFromListing, navItems, projectCard, slug as hubSlug, type Card } from './hub'
 import { SERVER_PY, localShim, parseActions } from './local'
-import { INFRA_FILE, PACKS, SCAN_HINT, cleanSvg, iconKeys, infraAlerts, mergeInfra, parseInfra, type Infra, type Provider } from './infra'
+import { INFRA_FILE, LOGOS, PACKS, kindOf, SCAN_HINT, cleanSvg, iconKeys, infraAlerts, mergeInfra, parseInfra, type Infra, type Provider } from './infra'
 import { buildUsage, parseSamples } from './usage'
 import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
 import type { Route } from './routing'
@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.27.1'
-export const WHATS_NEW = 'The node sheet on the page shows the reviewer\'s evidence (claim, source opened, verdict) and where to resume (next action, open questions, checks, files), plus the node\'s write scope.'
+export const VERSION = '0.27.2'
+export const WHATS_NEW = 'Archi tab: each cloud zone carries its provider\'s logo (Google Cloud, AWS, Azure), boxes name the product (Cloud Run, Lambda, Key Vault…), and the providers\' own type names (Microsoft.Web/sites, AWS::Lambda::Function, run.googleapis.com/Service) now get their official icon; an unknown type shows its provider\'s logo.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -876,10 +876,24 @@ export async function infraIcons($: $, infra: Infra): Promise<Record<string, str
       if (!got || got.exitCode !== 0) continue
       await $.process.run(['mv', `${zip}.part`, zip]).catch(() => undefined)
     }
-    for (const k of keys.filter(x => x.startsWith(`${p}:`))) {
+    for (const k of keys.filter(x => x.startsWith(`${p}:`) && !x.endsWith(':logo'))) {
       const r = await $.process.run(['unzip', '-p', zip, pack.icons[k.split(':')[1]!]!], { timeoutMs: 20e3 }).catch(() => undefined)
       const svg = r && r.exitCode === 0 ? cleanSvg(r.stdout) : undefined
       if (svg) out[k] = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+    }
+    // The provider's own logo: from its pack, or (Google Cloud, whose packs hold none) Google's product logo, fetched once.
+    const logo = LOGOS[p]
+    if (logo.pack) {
+      const r = await $.process.run(['unzip', '-p', zip, logo.pack], { timeoutMs: 20e3 }).catch(() => undefined)
+      const svg = r && r.exitCode === 0 ? cleanSvg(r.stdout) : undefined
+      if (svg) out[`${p}:logo`] = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+    } else if (logo.url) {
+      const file = `${dir}${p}-logo.png`
+      const have = await $.process.run(['test', '-s', file]).catch(() => undefined)
+      if (!have || have.exitCode !== 0) await $.process.run(['curl', '-fsSL', '-m', '60', '-o', file, logo.url], { timeoutMs: 70e3 }).catch(() => undefined)
+      const b = await $.process.run(['base64', '-w0', file], { timeoutMs: 10e3 }).catch(() => undefined)
+      const data = b && b.exitCode === 0 ? b.stdout.trim() : ''
+      if (/^iVBORw0KGgo[A-Za-z0-9+/=]+$/.test(data) && data.length < 200_000) out[`${p}:logo`] = `data:${logo.mime};base64,${data}`
     }
   }
   return out
@@ -890,7 +904,7 @@ async function pushInfra($: $) {
   const infra = await readInfra($)
   if (!infra.resources.length) return
   const icons = await infraIcons($, infra)
-  await pushDoc($, 'infra', { ...infra, icons, terms: Object.fromEntries(Object.entries(PACKS).map(([k, v]) => [k, v.terms])) } as unknown as Record<string, unknown>, true)
+  await pushDoc($, 'infra', { ...infra, resources: infra.resources.map(r => ({ ...r, ...(kindOf(r.type) ? { kind: kindOf(r.type) } : {}) })), icons, terms: Object.fromEntries(Object.entries(PACKS).map(([k, v]) => [k, v.terms])) } as unknown as Record<string, unknown>, true)
 }
 
 /** The node the writer works on, when that node has a scope the file falls outside of. */

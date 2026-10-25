@@ -60,7 +60,40 @@ export const KINDS: Record<string, string[]> = {
 export function kindOf(type: string): string | undefined {
   const t = type.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
   if (KINDS[t]) return t
-  return Object.keys(KINDS).find(k => KINDS[k]!.includes(t))
+  const exact = Object.keys(KINDS).find(k => KINDS[k]!.includes(t))
+  if (exact) return exact
+  // The providers' own type names, as their CLIs print them: Microsoft.Web/sites, AWS::Lambda::Function, run.googleapis.com/Service.
+  return MATCH.find(([re]) => re.test(t))?.[1]
+}
+const MATCH: [RegExp, string][] = [
+  [/function|lambda/, 'function'],
+  [/managedclusters|kubernetes|(^|_)(gke|eks|aks)(_|$)|container_googleapis/, 'kubernetes'],
+  [/cloud_?run|run_googleapis|app_?runner|container_?apps?|web_sites|app_?service|fargate|(^|_)ecs(_|$)|app_?engine/, 'serverless'],
+  [/firestore|dynamo|cosmos|documentdb|datastore/, 'nosql'],
+  [/redis|memorystore|elasticache|(^|_)cache/, 'cache'],
+  [/(^|_)sql|sqladmin|(^|_)rds(_|$)|aurora|postgres|mysql|mariadb/, 'sql'],
+  [/pubsub|(^|_)sqs|(^|_)sns|eventbridge|servicebus|event_?hubs?|eventarc|eventgrid|queue|topic/, 'queue'],
+  [/load_?balanc|elasticloadbalancing|(^|_)(elb|alb|nlb)(_|$)|forwarding_?rule|application_?gateway|backend_?service/, 'lb'],
+  [/api_?gateway|apigateway|apigee|api_?management|apimanagement/, 'api'],
+  [/(^|_)cdn|cloudfront|front_?door|frontdoor/, 'cdn'],
+  [/(^|_)dns|route_?53|dnszones/, 'dns'],
+  [/armor|(^|_)waf|firewall|security_?group|securitygroup|(^|_)nsg|networksecuritygroups/, 'firewall'],
+  [/(^|_)nat(_|$)|nat_?gateway|natgateway|cloud_?nat/, 'nat'],
+  [/secret|key_?vault|keyvault|(^|_)kms/, 'secrets'],
+  [/bigquery|redshift|synapse|warehouse/, 'warehouse'],
+  [/storage|(^|_)s3(_|$)|bucket|(^|_)blob|(^|_)gcs(_|$)/, 'storage'],
+  [/(^|_)vpc|vnet|virtual_?networks?|virtualnetworks|(^|_)network|subnet/, 'network'],
+  [/scheduler|(^|_)cron/, 'scheduler'],
+  [/registry|(^|_)ecr(_|$)|artifact/, 'registry'],
+  [/(^|_)iam|identity|entra|service_?account|managed_?identit/, 'iam'],
+  [/compute|instance|(^|_)ec2|virtual_?machines?|virtualmachines|(^|_)vm(_|$)/, 'vm'],
+]
+
+/** The providers' own logos, for a zone's title and for a resource whose kind has no icon: from each pack, or Google's product logo. */
+export const LOGOS: Record<Provider, { pack?: string; url?: string; mime: string }> = {
+  gcp: { url: 'https://www.gstatic.com/images/branding/product/2x/google_cloud_48dp.png', mime: 'image/png' },
+  aws: { pack: 'Architecture-Group-Icons_07312026/AWS-Cloud-logo_32.svg', mime: 'image/svg+xml' },
+  azure: { pack: 'Azure_Public_Service_Icons/Icons/other/10018-icon-service-Azure-A.svg', mime: 'image/svg+xml' },
 }
 
 /** Where each provider publishes its official architecture icons, and the file of each kind inside the pack. */
@@ -109,7 +142,9 @@ export function iconKeys(infra: Infra): string[] {
   const keys = new Set<string>()
   for (const r of infra.resources) {
     const k = kindOf(r.type)
-    if (k && (PROVIDERS as readonly string[]).includes(r.provider) && PACKS[r.provider as Provider].icons[k]) keys.add(`${r.provider}:${k}`)
+    if (!(PROVIDERS as readonly string[]).includes(r.provider)) continue
+    keys.add(`${r.provider}:logo`)
+    if (k && PACKS[r.provider as Provider].icons[k]) keys.add(`${r.provider}:${k}`)
   }
   return [...keys].sort()
 }

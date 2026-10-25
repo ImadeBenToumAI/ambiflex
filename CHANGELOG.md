@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.27.2
+
+- **Archi tab, provider logos**: each cloud zone and network table carries its provider's logo (Google Cloud, AWS, Azure).
+- **Official icons from the providers' own type names**: Azure ARM types (`Microsoft.Web/sites`…), CloudFormation types (`AWS::Lambda::Function`…) and GCP asset types (`run.googleapis.com/Service`…) now get their official icon; a type with no icon shows its provider's logo.
+- **Product names**: boxes name the product (Cloud Run, Lambda, Key Vault…) instead of the raw type.
+
 ## 0.27.1
 
 - **Node sheet**: shows the reviewer's evidence (claim, source opened, verdict with a line icon, correction or missing evidence), where to resume (next action, open questions, checks done, files, age) and the node's write scope.
