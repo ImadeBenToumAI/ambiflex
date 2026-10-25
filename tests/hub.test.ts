@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { hubFromJson, hubFromListing, navItems, projectCard, slug, type Card } from '../hooks/hub'
 import { emptyTree, upsert } from '../hooks/tree'
+import { PAGE_HTML } from '../hooks/page'
 
 const T0 = '2026-10-24T10:00:00.000Z'
 
@@ -33,4 +34,10 @@ test('hub: its URL from a record or from the artifact listing', () => {
   expect(hubFromJson('{"url":"http://evil"}')).toBeUndefined()
   expect(hubFromListing('- Ambiflex · stt https://claude.ai/artifact/aaa\n- Ambiflex Hub · https://claude.ai/artifact/bbb-1 updated today')).toBe('https://claude.ai/artifact/bbb-1')
   expect(hubFromListing('nothing')).toBeUndefined()
+})
+
+test('page: the waiting-for-you window and its Inbox button ship with the page', () => {
+  expect(PAGE_HTML).toContain('id="inbox"')
+  expect(PAGE_HTML).toContain('id="inboxbtn"')
+  expect(PAGE_HTML).toContain('function inboxItems()')
 })

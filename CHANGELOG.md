@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.28.0
+
+- **Waiting for you**: the project page gathers everything that needs your approval or review in one window: the plan to approve, a strategy review to decide, nodes to review (with proof and the reviewer's evidence), nodes blocked on you. Each item has a clear message, its actions (Validate, Approve plan, Open node) and a box to answer Claude about that node.
+- A sent item says so and leaves once Claude moves the node on; the window opens by itself when something new arrives, and the **Inbox** button at the top right, with a count, reopens it.
+
 ## 0.27.2
 
 - **Archi tab, provider logos**: each cloud zone and network table carries its provider's logo (Google Cloud, AWS, Azure).

@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.27.2'
-export const WHATS_NEW = 'Archi tab: each cloud zone carries its provider\'s logo (Google Cloud, AWS, Azure), boxes name the product (Cloud Run, Lambda, Key Vault…), and the providers\' own type names (Microsoft.Web/sites, AWS::Lambda::Function, run.googleapis.com/Service) now get their official icon; an unknown type shows its provider\'s logo.'
+export const VERSION = '0.28.0'
+export const WHATS_NEW = 'Waiting for you: the page opens one window with everything that needs your approval or review (plan, strategy review, nodes to review, nodes blocked on you), each with a clear message and a box to answer Claude. A sent item says so and leaves once Claude moves the node on; the Inbox button at the top right reopens it.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
