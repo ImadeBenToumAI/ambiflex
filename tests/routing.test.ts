@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { parseKind, planRoute, route, statusLine, tierOf } from '../hooks/routing'
+import { parseKind, planRoute, route, statusLine, tierOf , noteModelCall, callTotals, aliasOf } from '../hooks/routing'
 import type { TreeNode } from '../types'
 
 const node = (o: Partial<TreeNode>): TreeNode => ({ id: 'n1', title: 'Step', lens: 'step', status: 'exploring', parents: [], createdAt: '', updatedAt: '', ...o })
@@ -35,4 +35,15 @@ test('routing: a light model\'s word sorts a step; the status line says the week
   expect(route(node({ title: 'Tidy the module', weight: 1, kind: 'risky' }), 3).model).toBe('opus')
   expect(statusLine({ weekLeft: 38.4, node: 'n4 Parser', route: { model: 'sonnet', effort: 'low', why: '' } })).toBe('38% week left · n4 Parser · sonnet low')
   expect(statusLine({})).toBeUndefined()
+})
+
+test('routing: every request is counted by model and effort, across sessions', () => {
+  let b = noteModelCall({}, 's1', 'claude-sonnet-5-5', 'medium', { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 500 })
+  b = noteModelCall(b, 's1', 'claude-sonnet-5-5', 'medium', { input_tokens: 50, output_tokens: 10 })
+  b = noteModelCall(b, 's2', 'claude-fable-5-1', 'max', { input_tokens: 10, output_tokens: 5 })
+  b = noteModelCall(b, 's2', 'claude-sonnet-5-5', 'medium', { input_tokens: 1, output_tokens: 1 })
+  expect(aliasOf('claude-opus-5-5')).toBe('opus')
+  const t = callTotals(b)
+  expect(t[0]).toEqual({ model: 'sonnet', effort: 'medium', n: 3, input: 151, output: 31, cacheRead: 500, cacheWrite: 0 })
+  expect(t.find(r => r.model === 'fable')?.n).toBe(1)
 })

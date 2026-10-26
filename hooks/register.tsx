@@ -11,7 +11,7 @@ import { HUB_FILE, HUB_TITLE, hubFromJson, hubFromListing, navItems, projectCard
 import { SERVER_PY, localShim, parseActions } from './local'
 import { INFRA_FILE, LOGOS, PACKS, kindOf, SCAN_HINT, cleanSvg, iconKeys, infraAlerts, mergeInfra, parseInfra, type Infra, type Provider } from './infra'
 import { buildUsage, parseSamples } from './usage'
-import { MODEL_IDS, TIERS, kindPrompt, parseKind, planRoute, route, routes, statusLine, tierOf } from './routing'
+import { MODEL_IDS, TIERS, callTotals, kindPrompt, noteModelCall, parseKind, planRoute, route, routes, statusLine, tierOf, type CallBook } from './routing'
 import type { Route } from './routing'
 import { SUMMARY_SCRIPT, backfillLines, parseSummaries, transcriptDir } from './backfill'
 import { buildBrain, describe, elementOf } from './brain'
@@ -88,8 +88,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.28.1'
-export const WHATS_NEW = 'Background tasks: the page now counts only the ones still running (an end that lands mid-turn is read; a new session starts with none; an entry whose end was never seen expires). Sounds: short recorded effects replace the synthesised ones.'
+export const VERSION = '0.28.2'
+export const WHATS_NEW = 'Model routing: the plan, Take altitude and Higher think on Fable by default; every model request is now counted (model, effort, tokens) and the routing panel compares what they cost with everything on the model and effort you pick.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -314,7 +314,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', ...(guard.overhead ? { overhead: guard.overhead } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', calls: await callRows($).catch(() => []), ...(guard.overhead ? { overhead: guard.overhead } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   // pushDoc also keeps the local copy the local page reads, page or not.
@@ -597,7 +597,7 @@ export function mergeIgnore(current: string, lines: string[]): string {
   if (!add.length) return current
   return `${current}${current && !current.endsWith('\n') ? '\n' : ''}${add.join('\n')}\n`
 }
-const RUNTIME_IGNORES = ['worktrees/', 'live.json', 'git.json', 'skills.json', 'usage.json', 'brain.json', '.seen-version', 'docs/', 'local.json', 'local.html', 'serve.py', 'actions.jsonl', 'page-status.json']
+const RUNTIME_IGNORES = ['worktrees/', 'live.json', 'calls.json', 'git.json', 'skills.json', 'usage.json', 'brain.json', '.seen-version', 'docs/', 'local.json', 'local.html', 'serve.py', 'actions.jsonl', 'page-status.json']
 async function ensureIgnores($: $) {
   const f = `${await rootOf($)}.ambiflex/.gitignore`
   const cur = (await $.fs.read(f).catch(() => '')) as string
@@ -1358,7 +1358,11 @@ async function startTurnCost($: $, text: string) {
   const c = await ctx($)
   c.turnUsd = (await $.session.usage().catch(() => undefined))?.cost?.usd
   c.turnKind = text.startsWith('[tree] Auto mode') ? 'auto' : c.pendingKick ? 'mixed' : text.startsWith('[tree]') ? 'plugin' : 'user'
+  // Planning and taking altitude are the strongest model's work, whatever node is in hand.
+  ;(c as { planTurn?: boolean }).planTurn = PLAN_TURN.test(text)
 }
+/** A turn that plans or steps back: a new task under the method, Take altitude, Higher on a node. */
+const PLAN_TURN = /\[tree\] (?:Apply the Ambiflex method|Take altitude|Go higher on)|tree_altitude|\/ambiflex altitude/i
 
 /** A main turn ends: its final answer is one more request; a plugin turn's cost is measured, not estimated. */
 async function endTurnCost($: $) {
@@ -1963,9 +1967,26 @@ async function refreshStatus($: $, weekLeft?: number) {
 
 // Model routing: the cap is the top model setting, else the session's own model; nothing is routed above it.
 async function routingCap($: $): Promise<number> {
+  // Ambiflex is for large, hard problems: the plan and Altitude think on the strongest tier unless the project caps it.
   const t = tierOf(await topModelOf($))
-  if (t >= 0) return t
-  return tierOf(await $.session.model().catch(() => ''))
+  return t >= 0 ? t : TIERS.length - 1
+}
+
+const CALLS_FILE = '.ambiflex/calls.json'
+/** Adds one model request to this project's book of calls, per session, written at most every 10 s. */
+async function noteCallUsage($: $, model: string, effort: string | number | undefined, usage: Record<string, number> | undefined) {
+  const c = await ctx($) as { calls?: CallBook; callsAt?: number; sid: string }
+  if (!c.calls) { try { c.calls = JSON.parse((await $.fs.read(`${await rootOf($)}${CALLS_FILE}`).catch(() => '')) as string || '{}') } catch { c.calls = {} } }
+  c.calls = noteModelCall(c.calls!, c.sid, model, effort, usage)
+  const now = await $.clock.now()
+  if (now - (c.callsAt ?? 0) < 10e3) return
+  c.callsAt = now
+  await $.fs.write(`${await rootOf($)}${CALLS_FILE}`, JSON.stringify(c.calls)).catch(() => undefined)
+}
+async function callRows($: $) {
+  const c = await ctx($) as { calls?: CallBook }
+  if (!c.calls) { try { c.calls = JSON.parse((await $.fs.read(`${await rootOf($)}${CALLS_FILE}`).catch(() => '')) as string || '{}') } catch { c.calls = {} } }
+  return callTotals(c.calls!)
 }
 
 /** The route of one model request: the node its loop works on, or the plan when the main loop works on none. */
@@ -1977,6 +1998,7 @@ async function stepRoute($: $, agentId: string | undefined): Promise<Route | und
     const n = node ? t.nodes.find(x => x.id === node) : undefined
     return n ? route(n, cap) : undefined
   }
+  if ((await ctx($) as { planTurn?: boolean }).planTurn) return planRoute(cap)
   const id = mainNode(t)
   const n = id ? t.nodes.find(x => x.id === id) : undefined
   return n ? route(n, cap) : planRoute(cap)
@@ -2451,16 +2473,21 @@ ${outline(await read($, tree))}` }
     const r = (await routingMode($)) === 'auto' ? await stepRoute($, e.agentId).catch(() => undefined) : undefined
     const c = await ctx($)
     c.lastModel = r?.model ?? e.model
-    if (!r) return yield* next(e)
-    const model = MODEL_IDS[r.model] ?? r.model
-    if (model === e.model && r.effort === e.effort) return yield* next(e)
+    // Each request is counted as it ran: its model, its effort and the tokens it used (the routing panel's measure).
+    const sent = r ? { ...e, model: MODEL_IDS[r.model] ?? r.model, effort: r.effort } : e
+    let res
     try {
-      return yield* next({ ...e, model, effort: r.effort })
+      res = (sent.model === e.model && sent.effort === e.effort) ? yield* next(e) : yield* next(sent)
     } catch (err) {
+      if (sent === e) throw err
       // A route the account cannot serve must never stop the work: send the request as it was.
-      $.ui.toast(`Ambiflex routing: ${model} refused (${String(err).slice(0, 80)}), using ${e.model}.`)
-      return yield* next(e)
+      $.ui.toast(`Ambiflex routing: ${sent.model} refused (${String(err).slice(0, 80)}), using ${e.model}.`)
+      res = yield* next(e)
+      await noteCallUsage($, e.model, e.effort, (res as { usage?: never })?.usage).catch(() => undefined)
+      return res
     }
+    await noteCallUsage($, sent.model, sent.effort, (res as { usage?: never })?.usage).catch(() => undefined)
+    return res
   })
 
 

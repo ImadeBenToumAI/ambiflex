@@ -86,3 +86,33 @@ export function statusLine(p: { weekLeft?: number; node?: string; route?: Route;
   const parts = [p.auto, p.weekLeft !== undefined ? `${Math.round(p.weekLeft)}% week left` : undefined, p.node, p.route ? `${p.route.model} ${p.route.effort}` : undefined].filter(Boolean)
   return parts.length ? parts.join(' · ') : undefined
 }
+
+/** What the model requests of a project actually were: per model and effort, how many and the tokens they used. */
+export type CallRow = { model: string; effort: string; n: number; input: number; output: number; cacheRead: number; cacheWrite: number }
+export type CallBook = Record<string, Record<string, CallRow>>
+
+/** The alias of a model id ("claude-opus-5-5" → "opus"), or the id when it is none of the tiers. */
+export function aliasOf(model: string): string {
+  const t = tierOf(model)
+  return t >= 0 ? TIERS[t]! : model
+}
+
+/** Adds one request to a session's rows. */
+export function noteModelCall(book: CallBook, session: string, model: string, effort: string | number | undefined, u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined): CallBook {
+  const m = aliasOf(model), e = typeof effort === 'string' ? effort : effort === undefined ? 'default' : String(effort)
+  const rows = { ...(book[session] ?? {}) }
+  const k = `${m}|${e}`
+  const r = rows[k] ?? { model: m, effort: e, n: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  rows[k] = { ...r, n: r.n + 1, input: r.input + (u?.input_tokens ?? 0), output: r.output + (u?.output_tokens ?? 0), cacheRead: r.cacheRead + (u?.cache_read_input_tokens ?? 0), cacheWrite: r.cacheWrite + (u?.cache_creation_input_tokens ?? 0) }
+  return { ...book, [session]: rows }
+}
+
+/** Every session's rows summed by model and effort, the heaviest first. */
+export function callTotals(book: CallBook): CallRow[] {
+  const out = new Map<string, CallRow>()
+  for (const rows of Object.values(book)) for (const r of Object.values(rows)) {
+    const k = `${r.model}|${r.effort}`, o = out.get(k)
+    out.set(k, o ? { ...o, n: o.n + r.n, input: o.input + r.input, output: o.output + r.output, cacheRead: o.cacheRead + r.cacheRead, cacheWrite: o.cacheWrite + r.cacheWrite } : { ...r })
+  }
+  return [...out.values()].sort((a, b) => (b.input + b.output) - (a.input + a.output))
+}

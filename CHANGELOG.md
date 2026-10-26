@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.28.2
+
+- **Fable plans**: the plan, Take altitude and Higher think on the strongest model (Fable) by default, no longer on the session's model.
+- **Every model request measured**: model, effort and tokens of each request are counted per project (`.ambiflex/calls.json`, git-ignored).
+- **Model routing panel**: pick the reference (Fable · high by default, any model and effort); the measured section lists each model · effort with its requests, tokens, cost and cost on the reference, and the saving net of Ambiflex; the estimate for open nodes is one pass per node, no failure. The button group is labelled "Model routing".
+
 ## 0.28.1
 
 - **Background tasks count only what runs**: a task's end that lands mid-turn is now read, so a finished task leaves the page; a new session starts with none; an entry whose end was never seen expires (6 h after its expected end, or 12 h without one).
