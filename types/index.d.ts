@@ -52,6 +52,10 @@ export type TreeNode = {
   handoff?: Handoff
   /** Paths (globs from the project root) this node's work may write; edits elsewhere are refused while it is worked. */
   scope?: string[]
+  /** The commit the evidence was gathered on; files in scope or handoff that change after it make the proof stale. */
+  evidenceSha?: string
+  /** Why the proof no longer matches the code (files changed since evidenceSha); empty once new evidence lands. */
+  staleProof?: string
   /** Each attempt at reaching the acceptance criterion, oldest first. */
   iterations?: Iteration[]
   startedAt?: string

@@ -252,8 +252,36 @@ export function autoTarget(tree: Tree): TreeNode | undefined {
  */
 export function autoBatch(tree: Tree, max: number): TreeNode[] {
   const resume = tree.nodes.filter(n => n.status === 'exploring' && n.lens !== 'goal' && !n.agent)
-  const batch = [...resume, ...readyOpen(tree)]
-  return batch.slice(0, Math.max(1, max))
+  // Parallel nodes must own disjoint files: a node runs beside another only when their write scopes cannot
+  // overlap, and beside a node still held by a subagent only on the same terms. A node with no scope may
+  // write anywhere, so it runs alone.
+  const busy = tree.nodes.filter(n => n.status === 'exploring' && n.lens !== 'goal' && n.agent)
+  const batch: TreeNode[] = []
+  for (const n of [...resume, ...readyOpen(tree)]) {
+    if (batch.length >= Math.max(1, max)) break
+    const others = [...busy, ...batch]
+    if (!others.length || others.every(o => !scopesOverlap(o.scope, n.scope))) batch.push(n)
+    else if (!batch.length && !busy.length) batch.push(n)
+  }
+  return batch
+}
+
+/** The literal head of a glob, before its first wildcard: every path it matches starts with it. */
+const globHead = (g: string) => g.replace(/^\.?\//, '').split(/[*?[{]/)[0]!
+
+/**
+ * Whether two write scopes may touch the same file. No scope means anywhere, so it overlaps everything.
+ * Two globs may overlap when one's literal head is a prefix of the other's: conservative, never a false "disjoint".
+ */
+export function scopesOverlap(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a?.length || !b?.length) return true
+  return a.some(x => b.some(y => { const hx = globHead(x), hy = globHead(y); return hx.startsWith(hy) || hy.startsWith(hx) }))
+}
+
+/** Paths a node's proof covers, as git pathspecs: the files its handoff names, else its scope globs. */
+export function proofPaths(n: TreeNode): string[] {
+  if (n.handoff?.files?.length) return n.handoff.files.map(f => f.replace(/^\.?\//, ''))
+  return (n.scope ?? []).map(g => `:(glob)${g.replace(/^\.?\//, '')}`)
 }
 
 /** "30min" | "2h" | "3d" | "1w" (also "2 h", "1.5d") → minutes; 0 when absent. A day is 8 h, a week 5 days. */
@@ -541,6 +569,7 @@ export function outline(tree: Tree): string {
     + (n.iterations?.length ? ` ↻${n.iterations.length} (last: ${n.iterations[n.iterations.length - 1].passed ? 'passed' : 'not yet'}, ${cut(n.iterations[n.iterations.length - 1].result, 60)})` : '')
     + (n.scope?.length ? ` scope: ${n.scope.slice(0, 4).join(', ')}` : '')
     + (n.evidence?.length ? ` evidence: ${n.evidence.filter(x => x.verdict === 'confirmed').length}/${n.evidence.length} confirmed` : '')
+    + (n.staleProof ? ` STALE PROOF: ${cut(n.staleProof, 120)}` : '')
     + (n.summary ? `\n    ${cut(n.summary, 200)}` : '')
     + (n.handoff && !['done', 'validated', 'merged', 'abandoned', 'moved'].includes(n.status) ? `\n    handoff (${n.handoff.at ?? '?'}): ${handoffLine(n.handoff)}` : ''),
   )

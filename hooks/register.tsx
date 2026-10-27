@@ -21,7 +21,7 @@ import type { SkillFiles } from './skills'
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, autoBatch, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
+  merge, autoTarget, autoBatch, proofPaths, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
   addReview, decide, proofScore, blockers, altitudeBrief, handoffLine, inScope,
@@ -80,6 +80,42 @@ async function inRoot($: $, timeoutMs?: number) {
   const r = (await rootOf($)).replace(/\/$/, '')
   return { ...(r ? { cwd: r } : {}), ...(timeoutMs ? { timeoutMs } : {}) }
 }
+/** HEAD of a node's worktree when it has one, else of the project: the commit a proof was gathered on. */
+async function headSha($: $, id?: string): Promise<string | undefined> {
+  const root = (await rootOf($)).replace(/\/$/, '')
+  for (const cwd of [...(id ? [`${root || '.'}/.ambiflex/worktrees/${id}`] : []), root]) {
+    const r = await $.process.run(['git', 'rev-parse', 'HEAD'], { ...(cwd ? { cwd } : {}), timeoutMs: 5000 }).catch(() => undefined)
+    if (r && r.exitCode === 0 && /^[0-9a-f]{40}$/.test(r.stdout.trim())) return r.stdout.trim()
+  }
+  return undefined
+}
+
+/**
+ * Proofs that no longer match the code: a finished node whose evidence commit is in HEAD's history, but whose
+ * files differ between that commit and HEAD, was changed by other work after it was proven (a parallel branch
+ * merged over it). It goes back to review, its proof re-based on HEAD so a new validation sticks.
+ */
+async function checkStaleProofs($: $): Promise<string[]> {
+  const t = await read($, tree)
+  const flagged: string[] = []
+  for (const n of t.nodes) {
+    if (!n.evidenceSha || n.staleProof || !['done', 'validated', 'merged'].includes(n.status)) continue
+    const paths = proofPaths(n)
+    if (!paths.length) continue
+    const opts = await inRoot($, 10000)
+    const anc = await $.process.run(['git', 'merge-base', '--is-ancestor', n.evidenceSha, 'HEAD'], opts).catch(() => undefined)
+    if (!anc || anc.exitCode !== 0) continue
+    const diff = await $.process.run(['git', 'diff', '--name-only', n.evidenceSha, 'HEAD', '--', ...paths], opts).catch(() => undefined)
+    const files = diff && diff.exitCode === 0 ? diff.stdout.trim().split('\n').filter(Boolean) : []
+    if (!files.length) continue
+    const head = await headSha($)
+    const why = `${files.slice(0, 4).join(', ')}${files.length > 4 ? ` +${files.length - 4}` : ''} changed after the proof (${n.evidenceSha.slice(0, 7)}); re-run the reviewer`
+    await commit($, { kind: 'upsert', input: { id: n.id, status: 'review', staleProof: why, ...(head ? { evidenceSha: head } : {}) } as never, isNew: false })
+    flagged.push(`${n.id} (${why})`)
+  }
+  return flagged
+}
+
 const FILE = async ($: $) => `${await rootOf($)}.ambiflex/tree.json`
 const LOG = async ($: $) => `${await rootOf($)}${LOG_FILE}`
 const ATTRS = async ($: $) => `${await rootOf($)}.ambiflex/.gitattributes`
@@ -88,8 +124,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.28.2'
-export const WHATS_NEW = 'Model routing: the plan, Take altitude and Higher think on Fable by default; every model request is now counted (model, effort, tokens) and the routing panel compares what they cost with everything on the model and effort you pick.'
+export const VERSION = '0.29.0'
+export const WHATS_NEW = 'Parallel branches own disjoint files: auto mode runs nodes side by side only when their write scopes cannot overlap. Evidence is pinned to its commit; when another branch later changes those files, the node goes back to review with a stale-proof note.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -119,7 +155,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 14. Proof and altitude: progress counts finished work; proof counts what is shown toward the goal (validated by the user, a criterion met with a replayable proof, a verification). When proof stalls, a critical node keeps missing, or the user asks to step back, take altitude (tree_altitude): the strongest model reviews the whole plan and proposes changes, which the user accepts or refuses (tree_review_decide); never apply them yourself.
 13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
-15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places. Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
+15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places: auto mode only runs nodes in parallel when their scopes are disjoint, and a node without one runs alone. Evidence is pinned to the commit it was gathered on; if another branch later changes those files, the node goes back to review (STALE PROOF in tree_get): re-run the reviewer. Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
 const NODE_SCHEMA = {
@@ -2176,6 +2212,8 @@ ${outline(await read($, tree))}` }
     if (chat) await pushDoc($, 'reply', { ...chat, state: 'received', at: new Date(await $.clock.now()).toISOString() }).catch(() => undefined)
     await pushLive($, true).catch(() => undefined)
     await startTurnCost($, e.text).catch(() => undefined)
+    const stale = await checkStaleProofs($).catch(() => [] as string[])
+    if (stale.length) $.ui.toast(`Ambiflex: proof no longer matches the code for ${stale.map(x => x.split(' ')[0]).join(', ')}; back to review.`)
     if (e.text.startsWith('[tree] Auto mode')) {
       ;(await ctx($)).pendingKick = undefined
       await countTurn($)
@@ -2272,6 +2310,12 @@ ${outline(await read($, tree))}` }
       reviewNote.push('kept at "needs review": in auto mode, done needs the ambiflex-reviewer\'s evidence table (spawn it, then tree_upsert with evidence)')
     }
     if (input.handoff) input.handoff = { ...(input.handoff as object), at: await nowIso($) }
+    // New evidence is pinned to the commit it was gathered on (the node's worktree when it has one), so a later
+    // change to its files by another branch shows the proof no longer matches the code.
+    if (Array.isArray(input.evidence) && input.evidence.length) {
+      const sha = await headSha($, input.id as string | undefined)
+      if (sha) { input.evidenceSha = sha; input.staleProof = '' }
+    }
     if (Array.isArray(input.scope) && !input.scope.length) input.scope = undefined
     const isNew = !input.id || !before.nodes.some(n => n.id === input.id)
     // An update to an id this tree does not have is a mistake (another project's tree, a typo), not a new node.

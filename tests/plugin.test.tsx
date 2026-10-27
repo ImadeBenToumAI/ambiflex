@@ -792,3 +792,37 @@ test('background tasks: a launch shows on its node, its end (a row appended mid-
   await flush()
   expect(live()).not.toContain('bg:bqtb68bwr')
 })
+
+test('a proof another branch changed goes back to review', async ($, on) => {
+  mock.clock(on)
+  const toasts: string[] = []
+  let head = 'a'.repeat(40)
+  let changed = ''
+  bottoms(on, toasts, new Map(), '', () => 'session_test', argv => {
+    if (argv[0] !== 'git') return { exitCode: 0, stdout: '', stderr: '' }
+    if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') return { exitCode: 0, stdout: `${head}\n`, stderr: '' }
+    if (argv[1] === 'merge-base') return { exitCode: 0, stdout: '', stderr: '' }
+    if (argv[1] === 'diff') return { exitCode: 0, stdout: changed, stderr: '' }
+    return { exitCode: 1, stdout: '', stderr: '' }
+  })
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Pay', lens: 'step', scope: ['src/pay/**'] } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'tests', evidence: [{ claim: 'ok', source: 'src/pay/a.ts', verdict: 'confirmed' }] } as never)
+  await start($, 'hello')
+  let got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
+  expect(got).not.toContain('STALE PROOF')
+  // Another branch merged over src/pay/a.ts.
+  head = 'b'.repeat(40); changed = 'src/pay/a.ts\n'
+  await start($, 'again')
+  got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
+  expect(got).toContain('STALE PROOF: src/pay/a.ts changed after the proof (aaaaaaa)')
+  expect(toasts.some(t => t.includes('n1'))).toBe(true)
+  // Checked once: the proof was re-based on HEAD, so a user's re-validation sticks.
+  const diffs = runs.filter(r => r[1] === 'diff').length
+  await start($, 'third')
+  expect(runs.filter(r => r[1] === 'diff').length).toBe(diffs)
+  // New evidence clears it.
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', id: 'n1', status: 'done', verification: 'tests', evidence: [{ claim: 'ok', source: 'src/pay/a.ts', verdict: 'confirmed' }] } as never)
+  got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
+  expect(got).not.toContain('STALE PROOF')
+})

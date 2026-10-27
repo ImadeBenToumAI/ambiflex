@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.29.0
+
+- Parallel nodes own disjoint files. Auto mode runs nodes side by side only when their write scopes cannot overlap, including nodes a subagent still holds. A node without a scope runs alone.
+- Evidence is pinned to the commit it was gathered on. If another branch later changes those files, the node goes back to review with a "STALE PROOF" note in `tree_get` and a toast. The proof is re-pinned to HEAD, so a re-validation sticks, and new evidence clears the note.
+
 ## 0.28.2
 
 - **Fable plans**: the plan, Take altitude and Higher think on the strongest model (Fable) by default, no longer on the session's model.

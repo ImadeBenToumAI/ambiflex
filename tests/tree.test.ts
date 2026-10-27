@@ -3,7 +3,7 @@ import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine
 import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
-import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine, scopesOverlap, proofPaths
 } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
@@ -368,8 +368,11 @@ test('weekly actives: ISO weeks and that week\'s asset', () => {
 })
 
 test('auto mode batches the nodes that can run together, never a node before its parent or earlier step', () => {
-  // sample(): n3 is being explored (resumed first), n2 is ready, n4 waits for both.
-  expect(autoBatch(sample(), 3).map(n => n.id)).toEqual(['n3', 'n2'])
+  // sample(): n3 is being explored (resumed first), n2 is ready, n4 waits for both. Neither has a scope: one at a time.
+  expect(autoBatch(sample(), 3).map(n => n.id)).toEqual(['n3'])
+  let d = upsert(sample(), { id: 'n3', scope: ['src/api/**'] }, T0).tree
+  d = upsert(d, { id: 'n2', scope: ['src/ui/**'] }, T0).tree
+  expect(autoBatch(d, 3).map(n => n.id)).toEqual(['n3', 'n2'])
   expect(autoBatch(sample(), 1).map(n => n.id)).toEqual(['n3'])
   // Numbered steps under one parent: only the first is ready.
   let s = upsert(emptyTree(), { title: 'Track', lens: 'depth', status: 'done', verification: 'x' }, T0).tree
@@ -392,4 +395,20 @@ test('scope globs: ** spans folders, * stays in one, worktrees count as the root
   expect(inScope(['drafts/**'], '/etc/passwd', '/repo/')).toBe(false)
   expect(inScope(undefined, '/anything', '/repo/')).toBe(true)
   expect(handoffLine({ next: 'n', open: ['q'] })).toBe('next: n · open: q')
+})
+
+test('parallel nodes must own disjoint files', () => {
+  expect(scopesOverlap(['src/api/**'], ['src/ui/**'])).toBe(false)
+  expect(scopesOverlap(['src/**'], ['src/ui/a.ts'])).toBe(true)
+  expect(scopesOverlap(['src/a*.ts'], ['src/ab.ts'])).toBe(true)
+  expect(scopesOverlap(['./docs/x.md'], ['docs/y.md'])).toBe(false)
+  expect(scopesOverlap(undefined, ['docs/y.md'])).toBe(true)
+  // A ready node whose scope overlaps a node a subagent holds waits for it; a disjoint one starts.
+  let s = upsert(emptyTree(), { title: 'Track', lens: 'depth', status: 'done', verification: 'x' }, T0).tree
+  s = upsert(s, { title: 'Held', lens: 'step', parents: ['n1'], status: 'exploring', agent: 'w', scope: ['src/**'] }, T0).tree
+  s = upsert(s, { title: 'Same module', lens: 'step', parents: ['n1'], scope: ['src/pay.ts'] }, T0).tree
+  s = upsert(s, { title: 'Docs', lens: 'step', parents: ['n1'], scope: ['docs/**'] }, T0).tree
+  expect(autoBatch(s, 3).map(n => n.id)).toEqual(['n4'])
+  expect(proofPaths({ ...s.nodes[3]!, handoff: { files: ['./docs/a.md'] } })).toEqual(['docs/a.md'])
+  expect(proofPaths(s.nodes[3]!)).toEqual([':(glob)docs/**'])
 })
