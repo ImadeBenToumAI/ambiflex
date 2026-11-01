@@ -778,3 +778,22 @@ export function inScope(scope: string[] | undefined, file: string, root: string)
   if (rel.startsWith('/') || rel.startsWith('..')) return false
   return scope.some(g => globRe(g).test(rel))
 }
+
+/**
+ * The gist of a failure, comparable across attempts: the first line that names an error, with numbers,
+ * hex ids and durations blanked so two runs of the same failure read the same. Undefined when nothing failed.
+ */
+export function errorSignature(output: string): string | undefined {
+  const line = output.split('\n').map(l => l.trim()).find(l => /\b(error|exception|failed|failure|fail|assert\w*|panic|traceback|cannot|not found)\b/i.test(l))
+  if (!line) return undefined
+  return line.replace(/0x[0-9a-f]+|\b[0-9a-f]{7,}\b/gi, '#').replace(/\d+(\.\d+)?/g, '#').replace(/\s+/g, ' ').slice(0, 160)
+}
+
+/** What to do when the same error comes back: ask the strongest model for advice, never for code. */
+export function adviceAsk(node: string | undefined, signature: string, advisor: string | undefined): string {
+  const where = node ? ` on ${node}` : ''
+  return `Same error twice${where}: "${signature}". Stop retrying the same fix. `
+    + (advisor
+      ? `Consult the advisor (${advisor}) now with the error, what you tried and the goal, then apply its advice.`
+      : 'Ask for advice before the next attempt: spawn one subagent with model "opus" (no #id in its description), give it the error, the attempts so far and the goal, and ask for a diagnosis and a plan, not code. Then apply it.')
+}

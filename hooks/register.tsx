@@ -21,7 +21,7 @@ import type { SkillFiles } from './skills'
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, autoBatch, proofPaths, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
+  merge, autoTarget, autoBatch, proofPaths, errorSignature, adviceAsk, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
   addReview, decide, proofScore, blockers, altitudeBrief, handoffLine, inScope,
@@ -116,6 +116,34 @@ async function checkStaleProofs($: $): Promise<string[]> {
   return flagged
 }
 
+/**
+ * The advisor Claude Code consults for this session, if any: the advisorModel setting (project local, project,
+ * then user settings), or an advisor tool seen in this session's messages (the --advisor flag sets no file).
+ */
+async function advisorOf($: $): Promise<string | undefined> {
+  const c = await ctx($) as { advisorSeen?: string }
+  const home = await $.env.get('HOME').catch(() => undefined) ?? ''
+  for (const f of [`${await rootOf($)}.claude/settings.local.json`, `${await rootOf($)}.claude/settings.json`, ...(home ? [`${home}/.claude/settings.json`] : [])]) {
+    try { const m = JSON.parse(await $.fs.read(f)).advisorModel; if (typeof m === 'string' && m && m !== 'off') return m } catch { /* no file, or not JSON */ }
+  }
+  return c.advisorSeen
+}
+
+/**
+ * Counts failures by their signature, per node. The second time one comes back it returns the advice to ask
+ * for (once per signature): a repeated error is where the strongest model's judgement pays for itself.
+ */
+async function repeatedError($: $, output: string, node: string | undefined): Promise<string | undefined> {
+  const sig = errorSignature(output)
+  if (!sig) return undefined
+  const c = await ctx($) as { errors?: Record<string, number> }
+  const key = `${node ?? '-'}|${sig}`
+  const seen = c.errors ??= {}
+  seen[key] = (seen[key] ?? 0) + 1
+  if (seen[key] !== 2) return undefined
+  return adviceAsk(node, sig, await advisorOf($))
+}
+
 const FILE = async ($: $) => `${await rootOf($)}.ambiflex/tree.json`
 const LOG = async ($: $) => `${await rootOf($)}${LOG_FILE}`
 const ATTRS = async ($: $) => `${await rootOf($)}.ambiflex/.gitattributes`
@@ -124,8 +152,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.29.0'
-export const WHATS_NEW = 'Parallel branches own disjoint files: auto mode runs nodes side by side only when their write scopes cannot overlap. Evidence is pinned to its commit; when another branch later changes those files, the node goes back to review with a stale-proof note.'
+export const VERSION = '0.30.0'
+export const WHATS_NEW = 'Voice on the page: every message box (a node, Waiting for you) has a mic, transcribed on your device only (Apple dictation on iPhone, iPad and Mac), in French or English. And the same error twice now asks the strongest model for advice, through your Claude Code advisor when one is set.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -155,7 +183,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 14. Proof and altitude: progress counts finished work; proof counts what is shown toward the goal (validated by the user, a criterion met with a replayable proof, a verification). When proof stalls, a critical node keeps missing, or the user asks to step back, take altitude (tree_altitude): the strongest model reviews the whole plan and proposes changes, which the user accepts or refuses (tree_review_decide); never apply them yourself.
 13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
-15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places: auto mode only runs nodes in parallel when their scopes are disjoint, and a node without one runs alone. Evidence is pinned to the commit it was gathered on; if another branch later changes those files, the node goes back to review (STALE PROOF in tree_get): re-run the reviewer. Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
+15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places: auto mode only runs nodes in parallel when their scopes are disjoint, and a node without one runs alone. Evidence is pinned to the commit it was gathered on; if another branch later changes those files, the node goes back to review (STALE PROOF in tree_get): re-run the reviewer. When the plugin says the same error came back twice, stop retrying the same fix and get advice first (the advisor if one is set, else an opus subagent that diagnoses and does not write code). Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
 const NODE_SCHEMA = {
@@ -2384,6 +2412,8 @@ ${outline(await read($, tree))}` }
     if (!node) return { result: `No node ${id}.` }
     await commit($, { kind: 'upsert', input: { id, iterations: node.iterations, status: node.status, ...(node.verification ? { verification: node.verification } : {}) } })
     const n = node.iterations!.length
+    const ask = passed ? undefined : await repeatedError($, `failed: ${result}`, id).catch(() => undefined)
+    if (ask) return { result: `${id} iteration ${n} recorded, criterion not met yet. ${ask}` }
     return { result: passed ? `${id} accepted at iteration ${n}: done.` : `${id} iteration ${n} recorded, criterion not met yet${node.acceptance ? ` (${node.acceptance})` : ''}: iterate again.` }
   })
 
@@ -2560,6 +2590,16 @@ ${outline(await read($, tree))}` }
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshGit($).catch(() => undefined)
     if (bgRun) await noteBackground($, ran, `${(e as { description?: string }).description ?? ''} ${e.command}`, `Bash: ${(e as { description?: string }).description || 'background command'}`).catch(() => undefined)
+    const out = typeof (ran as { result?: unknown })?.result === 'string' ? (ran as { result: string }).result : ''
+    if (!bgRun && /exit code [1-9]|\bfailed\b|error/i.test(out)) {
+      const t = await read($, tree)
+      const nodeId = e.agentId ? (await read($, live))[e.agentId]?.node : mainNode(t)
+      const ask = await repeatedError($, out, nodeId).catch(() => undefined)
+      if (ask) {
+        $.ui.toast(`Ambiflex: ${ask.split('. ')[0]}; asking for advice.`)
+        return { ...(ran as object), result: `${out}\n\n[Ambiflex] ${ask}` } as typeof ran
+      }
+    }
     if (nudge) {
       $.ui.toast(nudge)
       const r = ran as { result?: unknown }
@@ -2573,6 +2613,7 @@ ${outline(await read($, tree))}` }
     const r = await next(e)
     try {
       const text = JSON.stringify((e as { message?: { content?: unknown } }).message?.content ?? '')
+      if (/advisor_tool/.test(text)) { const m = /"model"\s*:\s*"([^"]+)"/.exec(text); (await ctx($) as { advisorSeen?: string }).advisorSeen ??= m?.[1] ?? 'on' }
       if (/task-notification|task_?id/i.test(text)) {
         const map = await read($, live)
         for (const id of endedTasks(text.replace(/\\n/g, '\n').replace(/\\"/g, '"'))) if (map[`bg:${id}`]) await setLive($, `bg:${id}`, null)

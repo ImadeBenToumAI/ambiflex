@@ -3,7 +3,7 @@ import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine
 import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
-import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine, scopesOverlap, proofPaths
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine, scopesOverlap, proofPaths, errorSignature, adviceAsk
 } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
@@ -411,4 +411,13 @@ test('parallel nodes must own disjoint files', () => {
   expect(autoBatch(s, 3).map(n => n.id)).toEqual(['n4'])
   expect(proofPaths({ ...s.nodes[3]!, handoff: { files: ['./docs/a.md'] } })).toEqual(['docs/a.md'])
   expect(proofPaths(s.nodes[3]!)).toEqual([':(glob)docs/**'])
+})
+
+test('a repeated error reads the same across runs; the advice names the advisor when there is one', () => {
+  const a = errorSignature('ok\nFAIL src/pay.test.ts > refunds (12 ms)\nExpected 3, got 4')
+  const b = errorSignature('FAIL src/pay.test.ts > refunds (48 ms)')
+  expect(a).toBe(b)
+  expect(errorSignature('all 12 tests passed')).toBeUndefined()
+  expect(adviceAsk('n3', a!, 'opus')).toContain('Consult the advisor (opus)')
+  expect(adviceAsk('n3', a!, undefined)).toContain('model "opus"')
 })

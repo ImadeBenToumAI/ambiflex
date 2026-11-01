@@ -826,3 +826,25 @@ test('a proof another branch changed goes back to review', async ($, on) => {
   got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
   expect(got).not.toContain('STALE PROOF')
 })
+
+test('the same error twice asks for advice, once, from the advisor when one is set', async ($, on) => {
+  mock.clock(on)
+  const toasts: string[] = []
+  const disk = new Map<string, string>()
+  bottoms(on, toasts, disk)
+  on('tool.call', { tool: 'Bash' }, async () => ({ result: 'FAIL src/pay.test.ts > refunds (31 ms)\nExit code 1' }))
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  const run = async () => String(((await $.tool.call({ tool: 'Bash', command: 'bun test' } as never)) as { result?: unknown }).result)
+  expect(await run()).not.toContain('[Ambiflex] Same error twice')
+  expect(await run()).toContain('[Ambiflex] Same error twice')
+  expect(toasts.some(t => t.includes('asking for advice'))).toBe(true)
+  // Once per error: the third run is left alone.
+  expect(await run()).not.toContain('Same error twice')
+  // With an advisor in the project's settings, the advice goes to it.
+  const root = [...disk.keys()].find(k => k.endsWith('.ambiflex/tree.json'))!.replace('.ambiflex/tree.json', '')
+  disk.set(`${root}.claude/settings.json`, JSON.stringify({ advisorModel: 'opus' }))
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Latency', lens: 'step', acceptance: 'p99 < 80 ms' } as never)
+  const iter = async () => String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_iterate', id: 'n1', result: 'p99 182 ms, failed', passed: false } as never)) as { result?: unknown }).result)
+  expect(await iter()).not.toContain('advisor')
+  expect(await iter()).toContain('Consult the advisor (opus)')
+})

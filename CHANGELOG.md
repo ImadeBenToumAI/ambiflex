@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.30.0
+
+- Voice, on your device only. Every message box on the page has a mic: talking to Claude about a node, and each reply in "Waiting for you". The browser's recognizer is used only when it can promise on-device processing. Otherwise the page points to Apple's dictation, which also transcribes on the device: the keyboard's mic on iPhone and iPad, or fn twice on a Mac. It works in French and English. Nothing goes to a cloud speech service.
+- When the same error comes back twice on a node (a command's output, or a failing iteration), Ambiflex stops the retry loop. It asks Claude to get advice first: from your Claude Code advisor (`--advisor` or the `advisorModel` setting) when one is set, or else from an Opus subagent that diagnoses the problem and writes no code.
+
 ## 0.29.0
 
 - Parallel nodes own disjoint files. Auto mode runs nodes side by side only when their write scopes cannot overlap, including nodes a subagent still holds. A node without a scope runs alone.
