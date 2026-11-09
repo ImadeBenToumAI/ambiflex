@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.31.0
+
+- Roles, in three layers, following Gartner's view of where engineering roles are heading: Product Engineer, Forward-Deployed Engineer and AI Platform Team, down to the craft (front-end, back-end, mobile, UX, QA, SRE, ML, and more). Each node gets a role: Claude sets it, or Ambiflex reads it from the files the node works on.
+- On the page, "I am…" highlights the work of one role at any layer, dims the rest, and keeps only your decisions in "Waiting for you". The node sheet shows each node's role.
+- Rename or extend the roles in `.ambiflex/roles.json`.
+
 ## 0.30.0
 
 - Voice, on your device only. Every message box on the page has a mic: talking to Claude about a node, and each reply in "Waiting for you". The browser's recognizer is used only when it can promise on-device processing. Otherwise the page points to Apple's dictation, which also transcribes on the device: the keyboard's mic on iPhone and iPad, or fn twice on a Mac. It works in French and English. Nothing goes to a cloud speech service.

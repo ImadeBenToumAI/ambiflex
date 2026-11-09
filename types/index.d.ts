@@ -52,6 +52,8 @@ export type TreeNode = {
   handoff?: Handoff
   /** Paths (globs from the project root) this node's work may write; edits elsewhere are refused while it is worked. */
   scope?: string[]
+  /** Who the work belongs to, as a role path from the project's taxonomy: "product/engineering/backend". */
+  role?: string
   /** The commit the evidence was gathered on; files in scope or handoff that change after it make the proof stale. */
   evidenceSha?: string
   /** Why the proof no longer matches the code (files changed since evidenceSha); empty once new evidence lands. */

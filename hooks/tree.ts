@@ -567,6 +567,7 @@ export function outline(tree: Tree): string {
     + (n.weight !== undefined && n.weight !== 1 ? ` weight ${n.weight}/5` : '')
     + (n.acceptance ? ` accept: ${cut(n.acceptance, 80)}` : '')
     + (n.iterations?.length ? ` ↻${n.iterations.length} (last: ${n.iterations[n.iterations.length - 1].passed ? 'passed' : 'not yet'}, ${cut(n.iterations[n.iterations.length - 1].result, 60)})` : '')
+    + (n.role ? ` role: ${n.role}` : '')
     + (n.scope?.length ? ` scope: ${n.scope.slice(0, 4).join(', ')}` : '')
     + (n.evidence?.length ? ` evidence: ${n.evidence.filter(x => x.verdict === 'confirmed').length}/${n.evidence.length} confirmed` : '')
     + (n.staleProof ? ` STALE PROOF: ${cut(n.staleProof, 120)}` : '')

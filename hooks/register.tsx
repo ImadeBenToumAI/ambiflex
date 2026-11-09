@@ -18,6 +18,7 @@ import { buildBrain, describe, elementOf } from './brain'
 import type { BrainSource } from './brain'
 import { buildSkills, parseEvents, parseSkillLog, skillOf } from './skills'
 import type { SkillFiles } from './skills'
+import { ROLES_FILE, knownRole, parseRoles, roleLabel, roleOf, rolePaths, type Role } from './roles'
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
@@ -144,6 +145,19 @@ async function repeatedError($: $, output: string, node: string | undefined): Pr
   return adviceAsk(node, sig, await advisorOf($))
 }
 
+/** The page's role filter: the taxonomy as flat paths, and each node's role (set, or inferred from its scope). */
+async function rolesSnapshot($: $, t: Tree) {
+  const roles = await readRoles($)
+  const nodeRoles: Record<string, { path: string; inferred: boolean; label: string }> = {}
+  for (const n of t.nodes) { const r = roleOf(roles, n); if (r.path) nodeRoles[n.id] = { path: r.path, inferred: r.inferred, label: roleLabel(roles, r.path) } }
+  return { roles: rolePaths(roles), nodeRoles }
+}
+
+/** The project's role taxonomy: .ambiflex/roles.json when it holds a valid one, else Gartner's three layers. */
+async function readRoles($: $): Promise<Role[]> {
+  return parseRoles(await $.fs.read(`${await rootOf($)}${ROLES_FILE}`).catch(() => undefined))
+}
+
 const FILE = async ($: $) => `${await rootOf($)}.ambiflex/tree.json`
 const LOG = async ($: $) => `${await rootOf($)}${LOG_FILE}`
 const ATTRS = async ($: $) => `${await rootOf($)}.ambiflex/.gitattributes`
@@ -152,8 +166,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.30.0'
-export const WHATS_NEW = 'Voice on the page: every message box (a node, Waiting for you) has a mic, transcribed on your device only (Apple dictation on iPhone, iPad and Mac), in French or English. And the same error twice now asks the strongest model for advice, through your Claude Code advisor when one is set.'
+export const VERSION = '0.31.0'
+export const WHATS_NEW = 'Roles: each node belongs to a role, in three layers (Product Engineer, Forward-Deployed Engineer, AI Platform Team, down to front-end, back-end, SRE…), set by Claude or read from its files. On the page, "I am…" highlights your work and keeps your decisions in Waiting for you. Rename or extend the roles in .ambiflex/roles.json.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -183,7 +197,7 @@ For every task, apply Felix Rieseberg's be-ambitious method and record your reas
 14. Proof and altitude: progress counts finished work; proof counts what is shown toward the goal (validated by the user, a criterion met with a replayable proof, a verification). When proof stalls, a critical node keeps missing, or the user asks to step back, take altitude (tree_altitude): the strongest model reviews the whole plan and proposes changes, which the user accepts or refuses (tree_review_decide); never apply them yourself.
 13. External runs: when a node's work runs outside you (a VM, a container, a CI job, a detached process), set run on the node when it starts (state running, resource, ratePerHour, logUri), send run { state: "running" } as a heartbeat each time you check it, and set done, failed or stopped when it ends, and stop the resource. Every exit path of a job script writes a terminal marker (done or failed with its stage), so a crash is never silence.
 12. Models: with model routing on, each node runs on the model and effort it needs. To pin one (the user asks for it, or a node keeps failing), set model and effort on the node.
-15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give a node a scope (globs) when its writes should stay in known places: auto mode only runs nodes in parallel when their scopes are disjoint, and a node without one runs alone. Evidence is pinned to the commit it was gathered on; if another branch later changes those files, the node goes back to review (STALE PROOF in tree_get): re-run the reviewer. When the plugin says the same error came back twice, stop retrying the same fix and get advice first (the advisor if one is set, else an opus subagent that diagnoses and does not write code). Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
+15. Long tasks: after each meaningful stage of a node, and before you stop, write its handoff (files, checks done, open questions, next action) with tree_upsert: a later session resumes from it. When tree_get shows a handoff on an unfinished node, continue from it; do not start the node over. Give each node a role (role field: product, fde or platform, down to the craft, e.g. product/engineering/backend) so people can filter the tree by what they do; left out, it is inferred from the scope. Give a node a scope (globs) when its writes should stay in known places: auto mode only runs nodes in parallel when their scopes are disjoint, and a node without one runs alone. Evidence is pinned to the commit it was gathered on; if another branch later changes those files, the node goes back to review (STALE PROOF in tree_get): re-run the reviewer. When the plugin says the same error came back twice, stop retrying the same fix and get advice first (the advisor if one is set, else an opus subagent that diagnoses and does not write code). Before setting a node done in auto mode, spawn the reviewer subagent (subagent_type "ambiflex:ambiflex-reviewer", no #id in its description) with the node's goal, its acceptance, the files to inspect and the claims to check; pass its table as evidence. Fix incorrect rows and re-review; a node with unresolved rows stays in review.
 Keep the tree readable: a title names the finding, not the topic, in up to 40 characters ("8 kHz costs 0.85 pt", not "Telephony audio"); put the one-line result in headline and long text in detail. tree_set_goal never replaces an existing goal unless you pass replace: true, which you do only when the user asked for a new goal.`
 
 const NODE_SCHEMA = {
@@ -225,6 +239,7 @@ const NODE_SCHEMA = {
       properties: { files: { type: 'array', items: { type: 'string' }, description: 'Files the work left (paths).' }, checks: { type: 'array', items: { type: 'string' }, description: 'Checks done, with their result.' }, open: { type: 'array', items: { type: 'string' }, description: 'Open questions.' }, next: { type: 'string', description: 'The next action.' } },
     },
     scope: { type: 'array', items: { type: 'string' }, description: 'Paths (globs from the project root, e.g. "src/auth/**", "docs/*.md") this node may write. While it is worked, Edit and Write outside them are refused. Empty array clears it.' },
+    role: { type: 'string', description: 'Who this work belongs to: a role path from the project\'s taxonomy (default: product/engineering/frontend|backend|mobile|data, product/experience/ux|qa, fde/requirements/analysis, fde/field/architecture|integration|delivery, platform/agentops/platform|sre, platform/ai/ml|datascience). A shorter path ("product") is a whole layer. Left out, it is inferred from the scope. Empty string clears it.' },
   },
 } as const
 
@@ -378,7 +393,7 @@ async function save($: $, next: Tree) {
   if (guard.blocked) throw new Error(guard.warning)
   await update($, tree, () => next)
   // The snapshot names its project, so a page can tell whose tree it shows.
-  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', calls: await callRows($).catch(() => []), ...(guard.overhead ? { overhead: guard.overhead } : {}) }
+  const snapshot = { ...next, project: await projectName($), pluginVersion: VERSION, proof: proofScore(next), blockers: blockers(next, new Date().toISOString()).slice(0, 12), routing: await routingMode($), routes: routes(next, await routingCap($)), topModel: TIERS[Math.max(0, await routingCap($))] ?? 'fable', calls: await callRows($).catch(() => []), ...(await rolesSnapshot($, next)), ...(guard.overhead ? { overhead: guard.overhead } : {}) }
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   // pushDoc also keeps the local copy the local page reads, page or not.
@@ -2345,6 +2360,11 @@ ${outline(await read($, tree))}` }
       if (sha) { input.evidenceSha = sha; input.staleProof = '' }
     }
     if (Array.isArray(input.scope) && !input.scope.length) input.scope = undefined
+    if (typeof input.role === 'string') {
+      const r = input.role.trim()
+      if (!r) input.role = ''
+      else { const k = knownRole(await readRoles($), r); if (!k) return { result: `Unknown role "${r}". Known first layers: ${(await readRoles($)).map(x => x.id).join(', ')} (see ${ROLES_FILE} to add one). Nothing written.` }; input.role = k }
+    }
     const isNew = !input.id || !before.nodes.some(n => n.id === input.id)
     // An update to an id this tree does not have is a mistake (another project's tree, a typo), not a new node.
     if (input.id && isNew && !input.title) return { result: `No node ${input.id} in this tree (${before.nodes.length} nodes, goal "${before.goal.slice(0, 60)}"). Nothing written. Check the id with tree_get, or give a title to create a new node.` }
