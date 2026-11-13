@@ -865,3 +865,14 @@ test('a node takes a role from the taxonomy; an unknown one is refused and the p
   expect(doc.nodeRoles.n1).toMatchObject({ path: 'product/engineering/backend', inferred: false })
   expect(doc.nodeRoles.n2).toMatchObject({ path: 'product/engineering/frontend', inferred: true })
 })
+
+test('taking altitude asks for roles and for titles that match the work', async ($, on) => {
+  mock.clock(on)
+  bottoms(on, [], new Map())
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Vault', lens: 'step' } as never)
+  const ask = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_altitude' } as never)) as { result?: unknown }).result)
+  expect(ask).toContain('every node you add carries a role')
+  expect(ask).toContain('product (Product Engineer): engineering/frontend')
+  expect(ask).toContain('no longer matches the work')
+})

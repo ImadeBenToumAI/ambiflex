@@ -2,6 +2,13 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.32.0
+
+- Fold and unfold the tree by role. On the page, you can group nodes by layer: Product / FDE / Platform, then the second layer, then the crafts. Each group becomes one card showing its node count and progress. Tap a group to open it one layer down, or fold a node back into its role from its sheet. Grouping only changes the view: your tree stays the same.
+- Planning and Take altitude now work by role. Every node gets a role, and the review says which role layer the plan under-covers or over-loads.
+- Node titles stay true to the work. Claude checks that the work in hand belongs to the current node, and renames a node whose work has drifted from its title.
+- To organise an existing tree, run `/ambiflex roles` or use the "Organise by role" button. Claude gives every node a role and renames the nodes whose title no longer matches what was done.
+
 ## 0.31.0
 
 - Roles, in three layers, following Gartner's view of where engineering roles are heading: Product Engineer, Forward-Deployed Engineer and AI Platform Team, down to the craft (front-end, back-end, mobile, UX, QA, SRE, ML, and more). Each node gets a role: Claude sets it, or Ambiflex reads it from the files the node works on.
