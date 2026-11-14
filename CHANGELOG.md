@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.32.2
+
+- You can now close the strategy review panel with ×. The review stays in "Waiting for you", and "Open the review" brings the panel back.
+
 ## 0.32.1
 
 - Every card shows its role in a coloured tag, one colour per profile (Product blue, FDE orange, Platform purple), with lighter shades for deeper layers.

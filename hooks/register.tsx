@@ -185,8 +185,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.32.1'
-export const WHATS_NEW = 'Every card shows its role, coloured by profile (Product blue, FDE orange, Platform purple; lighter for deeper layers). A node at work is never folded into a group, and going to a node (a chip, Open node) opens its group so you always see it.'
+export const VERSION = '0.32.2'
+export const WHATS_NEW = 'The strategy review panel can be closed (×); it stays in Waiting for you, where Open the review brings it back.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
