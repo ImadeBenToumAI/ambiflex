@@ -149,7 +149,8 @@ async function repeatedError($: $, output: string, node: string | undefined): Pr
 async function rolesSnapshot($: $, t: Tree) {
   const roles = await readRoles($)
   const nodeRoles: Record<string, { path: string; inferred: boolean; label: string }> = {}
-  for (const n of t.nodes) { const r = roleOf(roles, n); if (r.path) nodeRoles[n.id] = { path: r.path, inferred: r.inferred, label: roleLabel(roles, r.path) } }
+  const byId = new Map(t.nodes.map(n => [n.id, n]))
+  for (const n of t.nodes) { if (n.lens === 'goal') continue; const r = roleOf(roles, n, byId); if (r.path) nodeRoles[n.id] = { path: r.path, inferred: r.inferred, label: roleLabel(roles, r.path) } }
   return { roles: rolePaths(roles), nodeRoles }
 }
 
@@ -185,8 +186,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.32.2'
-export const WHATS_NEW = 'The strategy review panel can be closed (×); it stays in Waiting for you, where Open the review brings it back.'
+export const VERSION = '0.33.0'
+export const WHATS_NEW = 'Fold and unfold: a − / +N button under every node with children hides or shows the nodes below it; tapping a role tag folds the card back into its role. Every node gets a role: set, else read from its files, its title and summary, or its parent; a node with none says No role.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -2397,6 +2398,7 @@ ${outline(await read($, tree))}` }
     const notes: string[] = [...reviewNote]
     if (node.evidence?.some(x => x.verdict !== 'confirmed') && node.status === 'review') notes.push(`kept at "needs review": ${node.evidence.filter(x => x.verdict !== 'confirmed').length} evidence row(s) incorrect or unresolved`)
     if (input.status === 'done' && node.status === 'review' && !reviewNote.length) notes.push('kept at "needs review": no verification was given, or the acceptance criterion has no passing iteration')
+    if (node.lens !== 'goal' && !knownRole(await readRoles($), node.role)) { const g = roleOf(await readRoles($), node, new Map(after.nodes.map(n => [n.id, n]))).path; notes.push(`no role set${g ? `: shown as ${g} (guessed); confirm it with tree_upsert {id: "${node.id}", role}` : ': give it one with tree_upsert {id, role}'}`) }
     if (input.status === 'blocked' && node.status !== 'blocked') notes.push('not blocked: blockedOn is required')
     if (input.status === 'moved' && node.status !== 'moved') notes.push('not moved: movedTo is required')
     // Read the write back from disk: what a later session (and the page) will see.

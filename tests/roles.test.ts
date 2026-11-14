@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { DEFAULT_ROLES, inferRole, knownRole, parseRoles, roleLabel, roleOf, rolePaths } from '../hooks/roles'
+import { DEFAULT_ROLES, roleFromText, inferRole, knownRole, parseRoles, roleLabel, roleOf, rolePaths } from '../hooks/roles'
 
 test('roles: three Gartner layers, inferred from a node\'s files, and a project can bring its own', () => {
   const paths = rolePaths(DEFAULT_ROLES)
@@ -22,4 +22,20 @@ test('roles: three Gartner layers, inferred from a node\'s files, and a project 
   expect(inferRole(own, ['blog/**'])).toBe('growth/seo')
   expect(parseRoles('not json')).toBe(DEFAULT_ROLES)
   expect(parseRoles('[]')).toBe(DEFAULT_ROLES)
+})
+
+test('every node gets a role: from its words, else from its parent', () => {
+  expect(roleFromText(DEFAULT_ROLES, 'Cloud hardening: 5/6 closed')).toBe('platform/agentops/sre')
+  expect(roleFromText(DEFAULT_ROLES, 'ROI page waits on real list prices')).toBe('fde/requirements/analysis')
+  expect(roleFromText(DEFAULT_ROLES, 'FAQ answers served by the bot')).toBe('fde/field/delivery')
+  expect(roleFromText(DEFAULT_ROLES, 'Quality import job + advisor grid')).toBe('product/engineering/data')
+  expect(roleFromText(DEFAULT_ROLES, 'Something vague')).toBeUndefined()
+  const nodes = [
+    { id: 'n1', lens: 'goal', title: 'Goal' },
+    { id: 'n2', title: 'Payment API', parents: ['n1'] },
+    { id: 'n3', title: 'Something vague', parents: ['n2'] },
+  ]
+  const byId = new Map(nodes.map(n => [n.id, n]))
+  expect(roleOf(DEFAULT_ROLES, nodes[2]!, byId)).toEqual({ path: 'product/engineering/backend', inferred: true })
+  expect(roleOf(DEFAULT_ROLES, { id: 'x', title: 'Something vague', parents: ['n1'] }, byId)).toEqual({ inferred: false })
 })

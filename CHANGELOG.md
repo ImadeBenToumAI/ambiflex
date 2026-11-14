@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.33.0
+
+- Fold and unfold. Every node with children has a − / +N button under its card that hides or shows the nodes below it. Tap a card's role tag to fold it back into its role. Nodes at work never hide.
+- Every node now gets a role: the one it was given, or else one read from its files, its title and summary, or its parent. Nodes with no role at all show a "No role" tag, and Claude is asked to confirm the roles it guessed.
+
 ## 0.32.2
 
 - You can now close the strategy review panel with ×. The review stays in "Waiting for you", and "Open the review" brings the panel back.
