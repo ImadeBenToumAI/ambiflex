@@ -2,6 +2,11 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.32.1
+
+- Every card shows its role in a coloured tag, one colour per profile (Product blue, FDE orange, Platform purple), with lighter shades for deeper layers.
+- A node at work always stays visible: it is never folded into a group. Going to a node (from a chip or with "Open node") opens its group so you see it.
+
 ## 0.32.0
 
 - Fold and unfold the tree by role. On the page, you can group nodes by layer: Product / FDE / Platform, then the second layer, then the crafts. Each group becomes one card showing its node count and progress. Tap a group to open it one layer down, or fold a node back into its role from its sheet. Grouping only changes the view: your tree stays the same.

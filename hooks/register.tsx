@@ -185,8 +185,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.32.0'
-export const WHATS_NEW = 'Fold and unfold by role: on the page, group the tree by layer (Product, FDE, Platform, then second layer, then crafts); tap a group to open it a layer down, or fold a node into its role from its sheet. Planning and Take altitude now give every node a role and rename nodes whose title no longer matches the work. Existing trees: /ambiflex roles, or the Organise by role button.'
+export const VERSION = '0.32.1'
+export const WHATS_NEW = 'Every card shows its role, coloured by profile (Product blue, FDE orange, Platform purple; lighter for deeper layers). A node at work is never folded into a group, and going to a node (a chip, Open node) opens its group so you always see it.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
