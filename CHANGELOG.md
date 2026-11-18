@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.33.1
+
+- Folding now gives colours. A node you fold takes a colour, and the nodes under it keep that colour once you unfold it, so you can see where they came from. To remove a colour, use "Clear its colour" in the node's sheet. Selecting a node outlines every node under it.
+
 ## 0.33.0
 
 - Fold and unfold. Every node with children has a − / +N button under its card that hides or shows the nodes below it. Tap a card's role tag to fold it back into its role. Nodes at work never hide.

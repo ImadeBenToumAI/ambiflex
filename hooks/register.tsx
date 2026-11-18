@@ -186,8 +186,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.33.0'
-export const WHATS_NEW = 'Fold and unfold: a − / +N button under every node with children hides or shows the nodes below it; tapping a role tag folds the card back into its role. Every node gets a role: set, else read from its files, its title and summary, or its parent; a node with none says No role.'
+export const VERSION = '0.33.1'
+export const WHATS_NEW = 'Folding gives colours: a node you fold takes a colour, and the nodes under it keep that colour once unfolded, so you see where they came from. Selecting a node outlines everything under it.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
