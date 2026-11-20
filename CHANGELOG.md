@@ -2,6 +2,12 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.33.2
+
+- A node with a background agent now stays "at work" until the agent reports. Before, it dropped to review as soon as the agent launched.
+- When an agent reports that it is blocked, its node is now marked blocked with the reason, instead of going to review.
+- A node's agent no longer gets a second worktree in another repository. Previously, when the session ran from a different folder, it got one there on top of its own worktree and could not use git where its work was.
+
 ## 0.33.1
 
 - Folding now gives colours. A node you fold takes a colour, and the nodes under it keep that colour once you unfold it, so you can see where they came from. To remove a colour, use "Clear its colour" in the node's sheet. Selecting a node outlines every node under it.

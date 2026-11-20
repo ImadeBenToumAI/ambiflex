@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, staleBackground, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
+import { launchedInBackground, blockedReason, VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, staleBackground, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -875,4 +875,22 @@ test('taking altitude asks for roles and for titles that match the work', async 
   expect(ask).toContain('every node you add carries a role')
   expect(ask).toContain('product (Product Engineer): engineering/frontend')
   expect(ask).toContain('no longer matches the work')
+})
+
+test('a background agent keeps its node at work until it reports; a blocked report blocks the node; no harness worktree in another repo', async ($, on) => {
+  mock.clock(on)
+  bottoms(on, [], new Map())
+  let seen: Record<string, unknown> = {}
+  on('tool.call', { tool: 'Agent' }, async (_$: unknown, e: Record<string, unknown>) => { seen = e; return { result: 'Async agent launched successfully. The agent is working in the background.', status: 'async_launched' } })
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Share link', lens: 'step' } as never)
+  await $.tool.call({ tool: 'Agent', description: 'Share link #n1', prompt: 'build it', isolation: 'worktree', run_in_background: true, tool_use_id: 'tu1' } as never)
+  expect(seen.isolation).toBeUndefined()
+  expect(String(seen.prompt)).toContain('.ambiflex/worktrees/n1')
+  let got = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_get' } as never)) as { result?: unknown }).result)
+  expect(got).toMatch(/n1 \[[^\]]*exploring/)
+  expect(launchedInBackground({ status: 'async_launched' })).toBe(true)
+  expect(launchedInBackground({ result: 'Done: 3 files changed' })).toBe(false)
+  expect(blockedReason('Phase E (n204) is blocked. I made no changes.\n\n**Blocker:** the worktree is of the wrong repo.')).toBe('the worktree is of the wrong repo.')
+  expect(blockedReason('All tests pass.')).toBeUndefined()
 })

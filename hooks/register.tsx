@@ -186,8 +186,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.33.1'
-export const WHATS_NEW = 'Folding gives colours: a node you fold takes a colour, and the nodes under it keep that colour once unfolded, so you see where they came from. Selecting a node outlines everything under it.'
+export const VERSION = '0.33.2'
+export const WHATS_NEW = 'Background agents stay shown at work on their node until they report (they no longer drop to review at launch); a report that says it is blocked blocks the node with its reason; and a node agent no longer gets a harness worktree of another repository on top of its own.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -1228,6 +1228,21 @@ function echo(n: TreeNode): string {
 async function storedNode($: $, id: string): Promise<TreeNode | undefined> {
   const text = await $.fs.read(await LOG($)).catch(() => '') as string
   return replay(parseLog(text)).nodes.find(n => n.id === id)
+}
+
+/** Whether an Agent call only launched its agent (async): the tool returns at once and the work goes on. */
+export function launchedInBackground(ran: unknown): boolean {
+  const text = typeof ran === 'string' ? ran : JSON.stringify(ran ?? '')
+  return /async_launched|Async agent launched|running in the background|agent is working in the background/i.test(text)
+}
+
+/** A report that says its work is blocked: the node then waits on what it names, not on a review. */
+export function blockedReason(report: string): string | undefined {
+  const clean = (x: string) => x.replace(/\*\*/g, '').trim().slice(0, 240)
+  const named = /(?:\*\*Blocker:?\*\*:?|^\s*Blocker:)\s*([^\n]+)/im.exec(report)
+  if (named?.[1]) return clean(named[1])
+  const line = report.split('\n').find(l => /\bis blocked\b|\bblocked:/i.test(l))
+  return line ? clean(line) : undefined
 }
 
 async function trackAgentEnd($: $, key: string, id: string | undefined) {
@@ -2305,9 +2320,11 @@ ${outline(await read($, tree))}` }
       // A spawned explorer reported: read its score, hand the node to review.
       const t = await read($, tree).catch(() => undefined)
       const { score, result, node: named } = parseReport(e.answer ?? '')
-      const node = t?.nodes.find(n => n.agent === e.agentId) ?? t?.nodes.find(n => n.id === named && n.status === 'exploring')
+      const liveNode = e.agentId ? (await read($, live).catch(() => ({} as Record<string, { node?: string }>)))[e.agentId]?.node : undefined
+      const node = t?.nodes.find(n => n.agent === e.agentId) ?? (liveNode ? t?.nodes.find(n => n.id === liveNode && n.status === 'exploring') : undefined) ?? t?.nodes.find(n => n.id === named && n.status === 'exploring')
       if (node) {
-        await commit($, { kind: 'upsert', input: { id: node.id, status: 'review', agent: '', ...(score !== undefined ? { score } : {}), ...(result ? { summary: result } : {}) } }).catch(() => undefined)
+        const blocked = blockedReason(String(e.answer ?? ''))
+        await commit($, { kind: 'upsert', input: { id: node.id, ...(blocked ? { status: 'blocked', blockedOn: blocked } : { status: 'review' }), agent: '', ...(score !== undefined ? { score } : {}), ...(result ? { summary: result } : {}) } }).catch(() => undefined)
         await update($, agents, list => list.filter(one => one !== e.agentId && one !== node.agent)).catch(() => undefined)
         for (const [k, act] of Object.entries(await read($, live))) if (k !== 'main' && !act.bg && act.node === node.id) await setLive($, k, null).catch(() => undefined)
       }
@@ -2550,12 +2567,17 @@ ${outline(await read($, tree))}` }
         const n = (await read($, tree)).nodes.find(x => x.id === id)
         if (n) { const r = route(n, await routingCap($)); input = { ...input, model: r.model, effort: r.effort } as typeof e }
       }
-      if (wt) input = { ...input, prompt: `${e.prompt}\n\nWork in the Git worktree at ${wt.path} (branch ${wt.branch}): make your changes and commits there, never on the main checkout. Put the branch name in your report.` }
+      // The node's worktree is made in the project's own repository. A harness worktree (isolation) is made in the
+      // session's folder, which may be another repository: the agent would then be refused git where it must work.
+      if (wt) { const { isolation: _drop, ...rest } = input as typeof input & { isolation?: string }; void _drop; input = { ...rest, prompt: `${e.prompt}\n\nWork in the Git worktree at ${wt.path} (branch ${wt.branch}): make your changes and commits there, never on the main checkout. Put the branch name in your report.` } as typeof e }
     }
+    let ran: unknown
     try {
-      return await next(input)
+      ran = await next(input)
+      return ran as Awaited<ReturnType<typeof next>>
     } finally {
-      await trackAgentEnd($, key, id).catch(() => undefined)
+      // A background agent returns at launch: its node stays at work until its report arrives (turn.complete).
+      if (!launchedInBackground(ran)) await trackAgentEnd($, key, id).catch(() => undefined)
     }
   })
 
