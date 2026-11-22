@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { launchedInBackground, blockedReason, VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, staleBackground, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
+import { advisorUsage, launchedInBackground, blockedReason, VERSION, WHATS_NEW, backgroundId, chatOf, isAppStorage, mergeIgnore, pathId, redact, secureKey, toolLabel, endedTasks, staleBackground, expectedEnd, newerVersion, parseCommits, parseDocs } from '../hooks/register'
 
 const flush = () => new Promise(r => (globalThis as any).setTimeout(r, 0))
 // The world beneath the plugin: nothing answers these in the kit, so each test lays its own bottom.
@@ -893,4 +893,21 @@ test('a background agent keeps its node at work until it reports; a blocked repo
   expect(launchedInBackground({ result: 'Done: 3 files changed' })).toBe(false)
   expect(blockedReason('Phase E (n204) is blocked. I made no changes.\n\n**Blocker:** the worktree is of the wrong repo.')).toBe('the worktree is of the wrong repo.')
   expect(blockedReason('All tests pass.')).toBeUndefined()
+})
+
+test('with an advisor set, taking altitude consults it instead of a fresh agent, and its tokens are counted apart', async ($, on) => {
+  mock.clock(on)
+  const disk = new Map<string, string>()
+  bottoms(on, [], disk)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_set_goal', goal: 'Ship' } as never)
+  await $.tool.call({ tool: 'mcp__ambiflex__tree_upsert', title: 'Vault', lens: 'step' } as never)
+  const plain = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_altitude' } as never)) as { result?: unknown }).result)
+  expect(plain).toContain('Spawn ONE Agent')
+  const root = [...disk.keys()].find(k => k.endsWith('.ambiflex/tree.json'))!.replace('.ambiflex/tree.json', '')
+  disk.set(`${root}.claude/settings.json`, JSON.stringify({ advisorModel: 'fable' }))
+  const hybrid = String(((await $.tool.call({ tool: 'mcp__ambiflex__tree_altitude' } as never)) as { result?: unknown }).result)
+  expect(hybrid).toContain('Consult your advisor (fable)')
+  expect(hybrid).not.toContain('Spawn ONE Agent')
+  expect(advisorUsage({ input_tokens: 10, iterations: [{ type: 'message', model: 'claude-sonnet-5-5' }, { type: 'advisor_message', model: 'claude-fable-5-1', input_tokens: 900, output_tokens: 40 }] })).toEqual([{ model: 'claude-fable-5-1', input_tokens: 900, output_tokens: 40, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }])
+  expect(advisorUsage({ input_tokens: 10 })).toEqual([])
 })

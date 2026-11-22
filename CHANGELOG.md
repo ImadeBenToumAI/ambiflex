@@ -2,6 +2,10 @@
 
 Each version reaches you when Claude Code updates the plugin: turn on auto-update (`/plugin` → **Marketplaces** → `ambiflex` → **Enable auto-update**) or run `claude plugin marketplace update ambiflex && claude plugin update ambiflex@ambiflex`, then `/reload-plugins` in the session (no restart). From 0.6.8 on, `/ambiflex update` does the first part for you.
 
+## 0.34.0
+
+- Hybrid routing with the Claude Code advisor. When an advisor is set (`--advisor` or the `advisorModel` setting), planning, Take altitude and the hardest nodes stay on your session's model and ask the advisor for its view. Before, the whole loop moved to the strongest model for those steps. Everything else stays the same: cheaper models still take the simple work, subagents are still routed, and the independent reviewer and the proof checks still run. The routing panel counts advisor tokens separately, so you can compare the hybrid with plain routing.
+
 ## 0.33.2
 
 - A node with a background agent now stays "at work" until the agent reports. Before, it dropped to review as soon as the agent launched.

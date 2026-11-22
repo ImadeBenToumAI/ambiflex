@@ -186,8 +186,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.33.2'
-export const WHATS_NEW = 'Background agents stay shown at work on their node until they report (they no longer drop to review at launch); a report that says it is blocked blocks the node with its reason; and a node agent no longer gets a harness worktree of another repository on top of its own.'
+export const VERSION = '0.34.0'
+export const WHATS_NEW = 'Hybrid routing with the Claude Code advisor: when an advisor is set (--advisor or advisorModel), planning, Take altitude and top-tier nodes stay on your session model and consult the advisor instead of moving the whole loop to the strongest model. Routing down (Haiku, Sonnet), subagents, the reviewer and proofs are unchanged. Advisor tokens are counted apart in the routing panel.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -1618,7 +1618,13 @@ async function altitudeRequest($: $): Promise<{ ask: string; text: string }> {
   const p = proofScore(t)
   const top = (await topModelOf($)) || 'fable'
   const brief = altitudeBrief(t, new Date().toISOString())
-  const ask = `[tree] Take altitude on this plan. Spawn ONE Agent (subagent_type "general-purpose", model "${top}", description "Take altitude: strategy review") with the brief below, and ask it to think at full effort and return ONLY a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary, status, verification, role}, "why": "...", "gain": proof points}. Its instructions:
+  const advisor = await advisorOf($)
+  const ask = advisor ? `[tree] Take altitude on this plan. Consult your advisor (${advisor}) with the brief below: ask it for a diagnosis and at most 12 proposals, as a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary, status, verification, role}, "why": "...", "gain": proof points}. The same rules apply as for any altitude review: Altitude / Depth / Range, read the results not the plan, every change cites the result that calls for it, every added node carries a role and an acceptance criterion with its judge, flag nodes whose title no longer matches the work, apply nothing. Then call tree_review_submit with its diagnosis, by "advisor ${advisor}", and its proposals, tell me the diagnosis in at most 6 lines and the 3 proposals with the largest gain.
+ROLES
+${await rolesBrief($)}
+
+BRIEF
+${brief}` : `[tree] Take altitude on this plan. Spawn ONE Agent (subagent_type "general-purpose", model "${top}", description "Take altitude: strategy review") with the brief below, and ask it to think at full effort and return ONLY a JSON object {"diagnosis": "...", "proposals": [...]}, where each proposal is {"kind": "add"|"update"|"abandon", "node"?: id, "fields"?: {title, lens, parents, weight, seq, acceptance, judge, estimate, summary, status, verification, role}, "why": "...", "gain": proof points}. Its instructions:
 - Apply the be-ambitious method: Altitude (the durable outcome behind the goal), Depth (what the best expert would do, with which tools and which external judge), Range (which other disciplines).
 - Read the results, not the plan: which assumptions did the results refute, which tracks stall (several missed attempts, estimates far exceeded), what the goal needs that no node covers, which tracks have no measurable criterion.
 - Propose at most 12 changes, the ones that raise the proof the most: new nodes (each with an acceptance criterion and a judge), reordering (seq) and re-weighting, sharper or corrected criteria, tracks to abandon with the reason. Every change cites the result that calls for it and estimates its proof gain. Keep node titles under 40 characters, stating a finding or a target.
@@ -2095,6 +2101,8 @@ async function noteCallUsage($: $, model: string, effort: string | number | unde
   const c = await ctx($) as { calls?: CallBook; callsAt?: number; sid: string }
   if (!c.calls) { try { c.calls = JSON.parse((await $.fs.read(`${await rootOf($)}${CALLS_FILE}`).catch(() => '')) as string || '{}') } catch { c.calls = {} } }
   c.calls = noteModelCall(c.calls!, c.sid, model, effort, usage)
+  // A request that consulted the advisor reports its advisor tokens apart: counted under the advisor's model.
+  for (const it of advisorUsage(usage)) c.calls = noteModelCall(c.calls!, c.sid, it.model, 'advisor', it)
   const now = await $.clock.now()
   if (now - (c.callsAt ?? 0) < 10e3) return
   c.callsAt = now
@@ -2106,6 +2114,13 @@ async function callRows($: $) {
   return callTotals(c.calls!)
 }
 
+/** Advisor calls inside one request's usage, wherever the API reports them (iterations or an advisor block). */
+export function advisorUsage(usage: unknown): { model: string; input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }[] {
+  const u = usage as { iterations?: unknown[]; advisor?: unknown } | undefined
+  const items = [...(Array.isArray(u?.iterations) ? u!.iterations : []), ...(u?.advisor ? [u.advisor] : [])] as Record<string, unknown>[]
+  return items.filter(x => x && typeof x.model === 'string' && /advisor/i.test(String(x.type ?? 'advisor'))).map(x => ({ model: String(x.model), input_tokens: Number(x.input_tokens) || 0, output_tokens: Number(x.output_tokens) || 0, cache_read_input_tokens: Number(x.cache_read_input_tokens) || 0, cache_creation_input_tokens: Number(x.cache_creation_input_tokens) || 0 }))
+}
+
 /** The route of one model request: the node its loop works on, or the plan when the main loop works on none. */
 async function stepRoute($: $, agentId: string | undefined): Promise<Route | undefined> {
   const t = await read($, tree)
@@ -2115,10 +2130,15 @@ async function stepRoute($: $, agentId: string | undefined): Promise<Route | und
     const n = node ? t.nodes.find(x => x.id === node) : undefined
     return n ? route(n, cap) : undefined
   }
-  if ((await ctx($) as { planTurn?: boolean }).planTurn) return planRoute(cap)
+  // Hybrid: with a Claude Code advisor set, judgement (plan, altitude, a top-tier node) stays on the session's own
+  // model and the advisor is consulted, instead of moving the whole loop, every token of it, to the strongest model.
+  const advisor = await advisorOf($)
+  if ((await ctx($) as { planTurn?: boolean }).planTurn) return advisor ? undefined : planRoute(cap)
   const id = mainNode(t)
   const n = id ? t.nodes.find(x => x.id === id) : undefined
-  return n ? route(n, cap) : planRoute(cap)
+  const r = n ? route(n, cap) : planRoute(cap)
+  if (advisor && tierOf(r.model) >= TIERS.indexOf('opus')) return undefined
+  return r
 }
 
 // /ambiflex backfill: the sessions this project had before the plugin logged them, read from Claude Code's
