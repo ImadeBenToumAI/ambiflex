@@ -22,7 +22,7 @@ import { ROLES_FILE, knownRole, parseRoles, roleLabel, roleOf, rolePaths, type R
 import type { Event } from './log'
 import {
   iterate, LENSES, LENS_LABEL, STATUSES, STATUS_LABEL, assumedRate, calibration, costEstimate, current, emptyTree, endLabel, eta, human,
-  merge, autoTarget, autoBatch, proofPaths, errorSignature, adviceAsk, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
+  merge, autoTarget, autoBatch, proofPaths, slimForPage, errorSignature, adviceAsk, nextId, nodeRef, parseReport, prune, rankChildren, outline, parseTree, progress, renderSvg, compactByDefault, layoutRows, upsert,
   runCost,
   silentRuns,
   addReview, decide, proofScore, blockers, altitudeBrief, handoffLine, inScope,
@@ -186,8 +186,8 @@ const PAGE_FILE = '.ambiflex/page.html'
 const LIVE = async ($: $) => `${await rootOf($)}.ambiflex/live.json`
 const SEEN = async ($: $) => `${await rootOf($)}.ambiflex/.seen-version`
 // Keep in step with .claude-plugin/plugin.json: shown once per project after an update.
-export const VERSION = '0.34.0'
-export const WHATS_NEW = 'Hybrid routing with the Claude Code advisor: when an advisor is set (--advisor or advisorModel), planning, Take altitude and top-tier nodes stay on your session model and consult the advisor instead of moving the whole loop to the strongest model. Routing down (Haiku, Sonnet), subagents, the reviewer and proofs are unchanged. Advisor tokens are counted apart in the routing panel.'
+export const VERSION = '0.34.1'
+export const WHATS_NEW = 'Large trees sync again: when the tree would pass the page store limit (256 KB), the page gets a lighter copy, cut step by step (long details, old iterations and handoffs, closed nodes text). The tree file keeps everything; the page says it shows a light copy.'
 
 const tree = atom({ plugin: 'ambiflex', key: 'tree' } as const, emptyTree())
 const selected = atom({ plugin: 'ambiflex', key: 'selected' } as const, '')
@@ -417,7 +417,7 @@ async function save($: $, next: Tree) {
   await $.fs.write((await FILE($)), `${JSON.stringify(snapshot, null, 2)}\n`)
   // The page follows the tree by itself, and only this project's page (its record names the project).
   // pushDoc also keeps the local copy the local page reads, page or not.
-  await pushDoc($, 'tree', snapshot as unknown as Record<string, unknown>, true).catch(() => undefined)
+  await pushDoc($, 'tree', slimForPage(snapshot as never) as unknown as Record<string, unknown>, true).catch(() => undefined)
 }
 
 /** The project's name: its folder's name. */

@@ -3,7 +3,7 @@ import { emptyLedger, noteCall, noteCompact, noteRequest, overhead, overheadLine
 import { isoWeek, weekUrl } from '../hooks/ping'
 
 import { parseActions } from '../hooks/local'
-import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine, scopesOverlap, proofPaths, errorSignature, adviceAsk
+import { iterate, runCost, silentRuns, parseTree, proofScore, blockers, addReview, decide, altitudeBrief, arrival, assumedRate, compactByDefault, autoTarget, autoBatch, calibration, expectedEnd, parseReport, prune, rankChildren, spread, costEstimate, current, depths, emptyTree, eta, merge, minutes, nextOpen, nodeRef, outline, progress, renderSvg, upsert, globRe, inScope, handoffLine, scopesOverlap, proofPaths, errorSignature, adviceAsk, slimForPage
 } from '../hooks/tree'
 
 const T0 = '2026-10-18T00:00:00.000Z'
@@ -420,4 +420,16 @@ test('a repeated error reads the same across runs; the advice names the advisor 
   expect(errorSignature('all 12 tests passed')).toBeUndefined()
   expect(adviceAsk('n3', a!, 'opus')).toContain('Consult the advisor (opus)')
   expect(adviceAsk('n3', a!, undefined)).toContain('model "opus"')
+})
+
+test('a tree too big for the page is sent lighter, step by step, and says so', () => {
+  const big = 'x'.repeat(5000)
+  const nodes = Array.from({ length: 80 }, (_, i) => ({ id: `n${i}`, title: `Node ${i}`, lens: 'step', status: i % 3 ? 'proposed' : 'merged', parents: [], detail: big, summary: 's'.repeat(400), handoff: { next: big } }))
+  const snap = { goal: 'g', nodes, reviews: [1, 2, 3] }
+  expect(slimForPage(snap, 10_000_000)).toBe(snap)
+  const light = slimForPage(snap, 200_000)
+  expect(JSON.stringify(light).length).toBeLessThanOrEqual(200_000)
+  expect(light.slim?.fullBytes).toBe(JSON.stringify(snap).length)
+  expect(light.nodes).toHaveLength(80)
+  expect(light.nodes.every(n => n.id && n.title)).toBe(true)
 })

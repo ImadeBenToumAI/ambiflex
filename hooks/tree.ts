@@ -798,3 +798,32 @@ export function adviceAsk(node: string | undefined, signature: string, advisor: 
       ? `Consult the advisor (${advisor}) now with the error, what you tried and the goal, then apply its advice.`
       : 'Ask for advice before the next attempt: spawn one subagent with model "opus" (no #id in its description), give it the error, the attempts so far and the goal, and ask for a diagnosis and a plan, not code. Then apply it.')
 }
+
+/** The page's store refuses a document over 256 KB: the tree is sent under this, with room for the rest. */
+export const PAGE_DOC_LIMIT = 240_000
+
+const clipText = (s: unknown, n: number) => typeof s === 'string' && s.length > n ? `${s.slice(0, n - 1)}…` : s
+const CLOSED_STATES = ['abandoned', 'moved', 'merged', 'validated']
+
+/**
+ * A lighter copy of the page snapshot when it would not fit the page's store, cut in steps from what the page
+ * needs least: long details, old iterations and handoffs, then closed nodes' text, then every detail. The tree
+ * file keeps everything; the page says it shows a light copy and tree_get gives the full text.
+ */
+export function slimForPage<T extends { nodes: Record<string, unknown>[]; reviews?: unknown[]; calls?: unknown[] }>(snap: T, limit = PAGE_DOC_LIMIT): T & { slim?: { level: number; fullBytes: number } } {
+  const size = (x: unknown) => JSON.stringify(x).length
+  const fullBytes = size(snap)
+  if (fullBytes <= limit) return snap
+  const steps: ((n: Record<string, unknown>) => Record<string, unknown>)[] = [
+    n => ({ ...n, detail: clipText(n.detail, 1200), iterations: Array.isArray(n.iterations) ? n.iterations.slice(-3) : n.iterations }),
+    n => ({ ...n, detail: clipText(n.detail, 300), handoff: undefined, evidence: Array.isArray(n.evidence) ? (n.evidence as Record<string, unknown>[]).map(e => ({ ...e, note: clipText(e.note, 120), source: clipText(e.source, 120) })) : n.evidence }),
+    n => CLOSED_STATES.includes(String(n.status)) ? { id: n.id, title: n.title, lens: n.lens, status: n.status, parents: n.parents, role: n.role, seq: n.seq, weight: n.weight, createdAt: n.createdAt, updatedAt: n.updatedAt } : n,
+    n => ({ ...n, detail: undefined, summary: clipText(n.summary, 160), headline: clipText(n.headline, 100), verification: clipText(n.verification, 160), evidence: undefined, iterations: Array.isArray(n.iterations) ? n.iterations.slice(-1) : n.iterations }),
+  ]
+  let cur: T = snap
+  for (let i = 0; i < steps.length; i++) {
+    cur = { ...cur, nodes: cur.nodes.map(steps[i]!), ...(i >= 1 && Array.isArray(cur.reviews) ? { reviews: cur.reviews.slice(-1) } : {}) }
+    if (size(cur) <= limit) return { ...cur, slim: { level: i + 1, fullBytes } }
+  }
+  return { ...cur, slim: { level: steps.length + 1, fullBytes } }
+}
